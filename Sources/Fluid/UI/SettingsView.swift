@@ -28,6 +28,7 @@ struct SettingsView: View {
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @ObservedObject private var settings = SettingsStore.shared
+    let selectedSection: SettingsSection
     @ObservedObject var microphonePreferenceCoordinator: MicrophonePreferenceCoordinator
     @Binding var appear: Bool
     @Binding var visualizerNoiseThreshold: Double
@@ -77,7 +78,6 @@ struct SettingsView: View {
     let restartApp: () -> Void
     let revealAppInFinder: () -> Void
     let openApplicationsFolder: () -> Void
-    let microphoneSettingsScrollRequest: Int
 
     private var isRecordingAnyShortcut: Bool {
         self.activeShortcutRecordingTarget != nil
@@ -214,13 +214,39 @@ struct SettingsView: View {
         .padding(.bottom, 4)
     }
 
+    private var analyticsSettingsCard: some View {
+        ThemedCard(style: .standard) {
+            VStack(alignment: .leading, spacing: 14) {
+                Label("Analytics & Privacy", systemImage: "hand.raised.fill")
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+
+                self.optionToggleRow(
+                    title: "Share Anonymous Analytics",
+                    description: "Send lean, anonymous daily usage, onboarding, retention, and model metrics. Never includes transcription text or prompts.",
+                    isOn: self.analyticsToggleBinding
+                )
+
+                Button("What we collect") {
+                    self.showAnalyticsPrivacy = true
+                }
+                .buttonStyle(.link)
+            }
+            .padding(16)
+        }
+    }
+
     var body: some View {
         SettingsPersistentScrollView(
             theme: self.theme,
-            colorScheme: self.colorScheme,
-            microphoneSettingsScrollRequest: self.microphoneSettingsScrollRequest
+            colorScheme: self.colorScheme
         ) {
             VStack(spacing: 16) {
+                Text(self.selectedSection.title)
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
                 // App Settings Card
                 ThemedCard(style: .standard) {
                     VStack(alignment: .leading, spacing: 14) {
@@ -565,6 +591,7 @@ struct SettingsView: View {
                     }
                     .padding(16)
                 }
+                .shownInSettingsSection(.general, selectedSection: self.selectedSection)
 
                 // Microphone Permission Card
                 ThemedCard(style: .standard) {
@@ -632,6 +659,7 @@ struct SettingsView: View {
                     }
                     .padding(16)
                 }
+                .shownInSettingsSection(.dictation, selectedSection: self.selectedSection)
 
                 // Global Hotkey Card
                 ThemedCard(style: .standard) {
@@ -1020,6 +1048,7 @@ struct SettingsView: View {
                     }
                     .padding(16)
                 }
+                .shownInSettingsSection(.dictation, selectedSection: self.selectedSection)
 
                 ThemedCard(style: .standard) {
                     VStack(alignment: .leading, spacing: 14) {
@@ -1080,6 +1109,7 @@ struct SettingsView: View {
                     }
                     .padding(16)
                 }
+                .shownInSettingsSection(.dictation, selectedSection: self.selectedSection)
 
                 // Notification Settings Card
                 ThemedCard(style: .standard) {
@@ -1117,6 +1147,7 @@ struct SettingsView: View {
                     }
                     .padding(16)
                 }
+                .shownInSettingsSection(.notifications, selectedSection: self.selectedSection)
 
                 // Audio Devices Card
                 ThemedCard(style: .standard) {
@@ -1220,7 +1251,7 @@ struct SettingsView: View {
                     }
                     .padding(16)
                 }
-                .background(MicrophoneSettingsScrollAnchor())
+                .shownInSettingsSection(.audio, selectedSection: self.selectedSection)
 
                 // Overlay Settings Card
                 ThemedCard(style: .standard) {
@@ -1436,12 +1467,17 @@ struct SettingsView: View {
                     }
                     .padding(16)
                 }
+                .shownInSettingsSection(.overlay, selectedSection: self.selectedSection)
+
+                self.analyticsSettingsCard
+                    .shownInSettingsSection(.dataAndDiagnostics, selectedSection: self.selectedSection)
 
                 // Backup & Restore Card
                 ThemedCard(style: .standard) {
                     self.backupUtilityRow()
                         .padding(16)
                 }
+                .shownInSettingsSection(.dataAndDiagnostics, selectedSection: self.selectedSection)
 
                 // Debug Settings Card
                 ThemedCard(style: .standard) {
@@ -1485,6 +1521,7 @@ struct SettingsView: View {
                     }
                     .padding(16)
                 }
+                .shownInSettingsSection(.dataAndDiagnostics, selectedSection: self.selectedSection)
 
                 ThemedCard(style: .standard) {
                     VStack(alignment: .leading, spacing: 14) {
@@ -1506,9 +1543,11 @@ struct SettingsView: View {
                     }
                     .padding(16)
                 }
+                .shownInSettingsSection(.dataAndDiagnostics, selectedSection: self.selectedSection)
             }
             .padding(16)
         }
+        .id(self.selectedSection)
         .sheet(isPresented: self.$showAnalyticsPrivacy) {
             AnalyticsPrivacyView()
                 .frame(minWidth: 520, minHeight: 520)
@@ -2599,30 +2638,19 @@ private final class SettingsPersistentScroller: NSScroller {
     }
 }
 
-private final class SettingsPersistentScrollCoordinator {
-    var lastMicrophoneSettingsScrollRequest = 0
-}
-
 private struct SettingsPersistentScrollView<Content: View>: NSViewRepresentable {
     private let theme: AppTheme
     private let colorScheme: ColorScheme
-    private let microphoneSettingsScrollRequest: Int
     private let content: Content
 
     init(
         theme: AppTheme,
         colorScheme: ColorScheme,
-        microphoneSettingsScrollRequest: Int,
         @ViewBuilder content: () -> Content
     ) {
         self.theme = theme
         self.colorScheme = colorScheme
-        self.microphoneSettingsScrollRequest = microphoneSettingsScrollRequest
         self.content = content()
-    }
-
-    func makeCoordinator() -> SettingsPersistentScrollCoordinator {
-        SettingsPersistentScrollCoordinator()
     }
 
     private var hostedContent: AnyView {
@@ -2662,7 +2690,7 @@ private struct SettingsPersistentScrollView<Content: View>: NSViewRepresentable 
         return scrollView
     }
 
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+    func updateNSView(_ scrollView: NSScrollView, context _: Context) {
         (scrollView.documentView as? NSHostingView<AnyView>)?.rootView = self.hostedContent
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
@@ -2673,52 +2701,15 @@ private struct SettingsPersistentScrollView<Content: View>: NSViewRepresentable 
         }
         scrollView.verticalScroller?.isHidden = false
         scrollView.verticalScroller?.alphaValue = 1
-
-        guard self.microphoneSettingsScrollRequest > 0,
-              context.coordinator.lastMicrophoneSettingsScrollRequest != self.microphoneSettingsScrollRequest
-        else { return }
-        context.coordinator.lastMicrophoneSettingsScrollRequest = self.microphoneSettingsScrollRequest
-        DispatchQueue.main.async {
-            Self.scrollToMicrophoneSettings(in: scrollView)
-        }
-    }
-
-    private static func scrollToMicrophoneSettings(in scrollView: NSScrollView) {
-        guard let documentView = scrollView.documentView else { return }
-        documentView.layoutSubtreeIfNeeded()
-        guard let anchor = documentView.descendant(withIdentifier: MicrophoneSettingsScrollAnchor.identifier) else {
-            return
-        }
-
-        let targetRect = anchor.convert(anchor.bounds, to: documentView)
-        let maximumY = max(0, documentView.bounds.height - scrollView.contentView.bounds.height)
-        let targetY = min(maximumY, max(0, targetRect.minY - 12))
-        scrollView.contentView.scroll(to: NSPoint(x: 0, y: targetY))
-        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 }
 
-private struct MicrophoneSettingsScrollAnchor: NSViewRepresentable {
-    static let identifier = NSUserInterfaceItemIdentifier("FluidVoice.MicrophoneSettingsScrollAnchor")
-
-    func makeNSView(context _: Context) -> NSView {
-        let view = NSView()
-        view.identifier = Self.identifier
-        return view
-    }
-
-    func updateNSView(_: NSView, context _: Context) {}
-}
-
-private extension NSView {
-    func descendant(withIdentifier identifier: NSUserInterfaceItemIdentifier) -> NSView? {
-        if self.identifier == identifier { return self }
-        for subview in self.subviews {
-            if let match = subview.descendant(withIdentifier: identifier) {
-                return match
-            }
+private extension View {
+    @ViewBuilder
+    func shownInSettingsSection(_ section: SettingsSection, selectedSection: SettingsSection) -> some View {
+        if section == selectedSection {
+            self
         }
-        return nil
     }
 }
 

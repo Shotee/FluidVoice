@@ -74,23 +74,6 @@ private final class DictationAIStreamPreviewBuffer {
     }
 }
 
-// MARK: - Sidebar Item Enum
-
-enum SidebarItem: Hashable {
-    case welcome
-    case voiceEngine
-    case aiEnhancements
-    case preferences
-    case meetingTools
-    case customDictionary
-    case stats
-    case history
-    case changelog
-    case feedback
-    case commandMode
-    case rewriteMode
-}
-
 enum PrimaryDictationShortcutEdit: Hashable {
     case add
     case replace(Int)
@@ -210,6 +193,7 @@ struct ContentView: View {
     }
 
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var hotkeyManager: GlobalHotkeyManager? = nil
     @State private var hotkeyManagerInitialized: Bool = false
 
@@ -243,6 +227,9 @@ struct ContentView: View {
 
     @State private var selectedSidebarItem: SidebarItem?
     @State private var previousSidebarItem: SidebarItem? = nil // Track previous for mode transitions
+    @State private var settingsNavigation = SettingsNavigationState()
+    @State private var isSettingsEntryHovered = false
+    @State private var isSettingsBackHovered = false
     @State private var playgroundUsed: Bool = SettingsStore.shared.playgroundUsed
     @State private var recordingAppInfo: (name: String, bundleId: String, windowTitle: String)? = nil
     @State private var recordingPrecedingText: String = ""
@@ -318,7 +305,6 @@ struct ContentView: View {
     @State private var savedProviders: [SettingsStore.SavedProvider] = []
     @State private var selectedProviderID: String = SettingsStore.shared.selectedProviderID
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
-    @State private var microphoneSettingsScrollRequest = 0
 
     var body: some View {
         let layout = AnyView(
@@ -327,7 +313,7 @@ struct ContentView: View {
                     self.onboardingOnlyView
                 } else {
                     NavigationSplitView(columnVisibility: self.$columnVisibility) {
-                        self.sidebarView
+                        self.sidebarContent
                             .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 300)
                     } detail: {
                         self.detailView
@@ -351,7 +337,7 @@ struct ContentView: View {
                 self.refreshAccessibilityPermissionState()
             }
             .onReceive(NotificationCenter.default.publisher(for: .openCustomDictionaryFromVoiceEngine)) { _ in
-                self.selectedSidebarItem = .customDictionary
+                self.navigateToApp(.customDictionary)
             }
             .onReceive(NotificationCenter.default.publisher(for: .appNavigationRequested)) { _ in
                 self.handlePendingAppNavigation()
@@ -578,9 +564,8 @@ struct ContentView: View {
             self.finishAccessibilityPermissionFlow()
         }
 
-        if self.selectedSidebarItem == nil {
-            let isOnboarded = self.asr.isAsrReady || self.asr.modelsExistOnDisk
-            self.selectedSidebarItem = isOnboarded ? .preferences : .welcome
+        if self.selectedSidebarItem == nil, !self.settingsNavigation.isPresented {
+            self.selectedSidebarItem = .welcome
         }
         self.handlePendingAppNavigation()
 
@@ -968,12 +953,11 @@ struct ContentView: View {
 
         switch destination {
         case .customDictionary:
-            self.selectedSidebarItem = .customDictionary
+            self.navigateToApp(.customDictionary)
         case .microphoneSettings:
-            self.selectedSidebarItem = .preferences
-            self.microphoneSettingsScrollRequest &+= 1
-        case .preferences:
-            self.selectedSidebarItem = .preferences
+            self.openSettings(.audio)
+        case .settings:
+            self.openSettings(.general)
         }
     }
 
@@ -982,9 +966,29 @@ struct ContentView: View {
 
         switch destination {
         case .aiEnhancements:
-            self.selectedSidebarItem = .aiEnhancements
+            self.navigateToApp(.aiEnhancements)
         case .history:
-            self.selectedSidebarItem = .history
+            self.navigateToApp(.history)
+        }
+    }
+
+    private func navigateToApp(_ destination: SidebarItem) {
+        withAnimation(self.sidebarModeAnimation) {
+            self.settingsNavigation.leaveForApp()
+            self.selectedSidebarItem = destination
+        }
+    }
+
+    private func openSettings(_ section: SettingsSection) {
+        withAnimation(self.sidebarModeAnimation) {
+            self.settingsNavigation.present(section, returningTo: self.selectedSidebarItem)
+            self.selectedSidebarItem = nil
+        }
+    }
+
+    private func closeSettings() {
+        withAnimation(self.sidebarModeAnimation) {
+            self.selectedSidebarItem = self.settingsNavigation.dismiss()
         }
     }
 
@@ -1167,10 +1171,20 @@ struct ContentView: View {
         NSWorkspace.shared.open(url)
     }
 
-    private var sidebarView: some View {
+    @ViewBuilder
+    private var sidebarContent: some View {
+        if self.settingsNavigation.isPresented {
+            self.settingsSidebarView
+                .transition(self.settingsSidebarTransition)
+        } else {
+            self.appSidebarView
+                .transition(self.appSidebarTransition)
+        }
+    }
+
+    private var appSidebarView: some View {
         List(selection: self.$selectedSidebarItem) {
             Section {
-                self.sidebarNavigationLink(.preferences, title: "Settings", systemImage: "gearshape.fill")
                 self.sidebarNavigationLink(.voiceEngine, title: "Voice Engine", systemImage: "waveform")
                 self.sidebarNavigationLink(.aiEnhancements, title: "AI Enhancement", systemImage: "brain")
                 self.sidebarNavigationLink(.customDictionary, title: "Custom Dictionary", systemImage: "text.book.closed.fill")
@@ -1204,6 +1218,123 @@ struct ContentView: View {
         .animation(nil, value: self.selectedSidebarItem)
         .navigationTitle("FluidVoice")
         .tint(self.theme.palette.accent)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            self.settingsEntryButton
+        }
+        .animation(self.sidebarModeAnimation, value: self.settingsNavigation.isPresented)
+    }
+
+    private var settingsSidebarView: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: self.theme.metrics.spacing.sm) {
+                Button {
+                    self.closeSettings()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(SidebarChromeButtonStyle(
+                    isHovered: self.isSettingsBackHovered,
+                    reduceMotion: self.accessibilityReduceMotion
+                ))
+                .onHover { self.isSettingsBackHovered = $0 }
+                .help("Back to FluidVoice")
+                .accessibilityLabel("Back to FluidVoice")
+
+                Text("Settings")
+                    .font(.system(size: 15, weight: .semibold))
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, self.theme.metrics.spacing.md)
+            .padding(.top, self.theme.metrics.spacing.sm)
+            .padding(.bottom, self.theme.metrics.spacing.xs)
+
+            List(selection: Binding(
+                get: { self.settingsNavigation.selectedSection },
+                set: { newValue in
+                    if let newValue {
+                        self.settingsNavigation.selectedSection = newValue
+                    }
+                }
+            )) {
+                ForEach(SettingsSection.allCases) { section in
+                    NavigationLink(value: section) {
+                        HStack(spacing: self.theme.metrics.spacing.sm) {
+                            Image(systemName: section.systemImage)
+                                .symbolRenderingMode(.hierarchical)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 18)
+
+                            Text(section.title)
+                        }
+                        .font(self.theme.typography.sidebarItem)
+                        .frame(minHeight: 28, alignment: .leading)
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            .animation(nil, value: self.settingsNavigation.selectedSection)
+        }
+        .navigationTitle("Settings")
+        .tint(self.theme.palette.accent)
+        .animation(self.sidebarModeAnimation, value: self.settingsNavigation.isPresented)
+    }
+
+    private var settingsEntryButton: some View {
+        Button {
+            self.openSettings(.general)
+        } label: {
+            HStack(spacing: self.theme.metrics.spacing.sm) {
+                Image(systemName: "gearshape")
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18)
+
+                Text("Settings")
+
+                Spacer(minLength: self.theme.metrics.spacing.sm)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .font(self.theme.typography.sidebarItem)
+            .padding(.horizontal, self.theme.metrics.spacing.sm)
+            .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(SidebarChromeButtonStyle(
+            isHovered: self.isSettingsEntryHovered,
+            reduceMotion: self.accessibilityReduceMotion
+        ))
+        .onHover { self.isSettingsEntryHovered = $0 }
+        .help("Settings")
+        .accessibilityLabel("Settings")
+        .padding(.horizontal, self.theme.metrics.spacing.sm)
+        .padding(.vertical, self.theme.metrics.spacing.sm)
+    }
+
+    private var sidebarModeAnimation: Animation {
+        self.accessibilityReduceMotion
+            ? .easeOut(duration: 0.12)
+            : .spring(response: 0.3, dampingFraction: 1)
+    }
+
+    private var settingsSidebarTransition: AnyTransition {
+        if self.accessibilityReduceMotion {
+            return .opacity
+        }
+        return .move(edge: .trailing).combined(with: .opacity)
+    }
+
+    private var appSidebarTransition: AnyTransition {
+        if self.accessibilityReduceMotion {
+            return .opacity
+        }
+        return .move(edge: .leading).combined(with: .opacity)
     }
 
     private func sidebarSectionHeader(_ title: String) -> some View {
@@ -1244,7 +1375,7 @@ struct ContentView: View {
 
     private var todayStatsButton: some View {
         TodayStatsToolbarButton(typingWPM: self.settings.userTypingWPM) {
-            self.selectedSidebarItem = .stats
+            self.navigateToApp(.stats)
         }
     }
 
@@ -1261,6 +1392,10 @@ struct ContentView: View {
     }
 
     private var detailContent: AnyView {
+        if self.settingsNavigation.isPresented {
+            return AnyView(self.preferencesView)
+        }
+
         switch self.selectedSidebarItem ?? .welcome {
         case .welcome:
             return AnyView(self.welcomeView)
@@ -1276,8 +1411,6 @@ struct ContentView: View {
                 activeShortcutRecordingTarget: self.$activeShortcutRecordingTarget,
                 shortcutRecordingMessage: self.$shortcutRecordingMessage
             ))
-        case .preferences:
-            return AnyView(self.preferencesView)
         case .meetingTools:
             return AnyView(self.meetingToolsView)
         case .customDictionary:
@@ -1460,6 +1593,7 @@ struct ContentView: View {
 
     private var preferencesView: some View {
         SettingsView(
+            selectedSection: self.settingsNavigation.selectedSection ?? .general,
             microphonePreferenceCoordinator: self.appServices.microphonePreferenceCoordinator,
             appear: self.$appear,
             visualizerNoiseThreshold: self.$visualizerNoiseThreshold,
@@ -1489,8 +1623,7 @@ struct ContentView: View {
             openAccessibilitySettings: self.openAccessibilitySettings,
             restartApp: self.restartApp,
             revealAppInFinder: self.revealAppInFinder,
-            openApplicationsFolder: self.openApplicationsFolder,
-            microphoneSettingsScrollRequest: self.microphoneSettingsScrollRequest
+            openApplicationsFolder: self.openApplicationsFolder
         )
     }
 
@@ -1504,15 +1637,13 @@ struct ContentView: View {
 
     private var commandModeView: some View {
         CommandModeView(service: self.commandModeService, onClose: {
-            let isOnboarded = self.asr.isAsrReady || self.asr.modelsExistOnDisk
-            self.selectedSidebarItem = isOnboarded ? .preferences : .welcome
+            self.navigateToApp(.welcome)
         })
     }
 
     private var rewriteModeView: some View {
         RewriteModeView(service: self.rewriteModeService, onClose: {
-            let isOnboarded = self.asr.isAsrReady || self.asr.modelsExistOnDisk
-            self.selectedSidebarItem = isOnboarded ? .preferences : .welcome
+            self.navigateToApp(.welcome)
         })
     }
 
@@ -3625,7 +3756,7 @@ struct ContentView: View {
             if self.selectedSidebarItem == .rewriteMode {
                 DebugLogger.shared.debug("Cancel callback: closing mode view", source: "ContentView")
                 DispatchQueue.main.async {
-                    self.selectedSidebarItem = .welcome
+                    self.navigateToApp(.welcome)
                 }
                 handled = true
             }
@@ -3700,8 +3831,7 @@ struct ContentView: View {
 
         if self.selectedSidebarItem == .rewriteMode {
             DebugLogger.shared.debug("Cancel shortcut: closing mode view", source: "ContentView")
-            let isOnboarded = self.asr.isAsrReady || self.asr.modelsExistOnDisk
-            self.selectedSidebarItem = isOnboarded ? .preferences : .welcome
+            self.navigateToApp(.welcome)
             handled = true
         }
 
@@ -4042,9 +4172,7 @@ extension ContentView {
 
     private func completeOnboarding(selecting target: SidebarItem? = nil) {
         self.settings.onboardingCompleted = true
-
-        let isOnboarded = self.asr.isAsrReady || self.asr.modelsExistOnDisk
-        self.selectedSidebarItem = target ?? (isOnboarded ? .preferences : .welcome)
+        self.navigateToApp(target ?? .welcome)
     }
 
     private func missingOnboardingCompletionRequirements(allowsAIConfiguration: Bool = false) -> [String] {
@@ -4426,6 +4554,32 @@ extension ContentView {
 }
 
 // swiftlint:enable type_body_length
+
+private struct SidebarChromeButtonStyle: ButtonStyle {
+    let isHovered: Bool
+    let reduceMotion: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        let scale = self.reduceMotion || !configuration.isPressed ? 1 : 0.985
+
+        configuration.label
+            .foregroundStyle(.primary)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.primary.opacity(self.backgroundOpacity(isPressed: configuration.isPressed)))
+            )
+            .scaleEffect(scale)
+            .animation(.easeOut(duration: self.reduceMotion ? 0.08 : 0.1), value: configuration.isPressed)
+            .animation(.easeOut(duration: 0.1), value: self.isHovered)
+    }
+
+    private func backgroundOpacity(isPressed: Bool) -> Double {
+        if isPressed {
+            return 0.12
+        }
+        return self.isHovered ? 0.08 : 0
+    }
+}
 
 private struct AccessibilitySettingsFloatingGuideView: View {
     let appURL: URL

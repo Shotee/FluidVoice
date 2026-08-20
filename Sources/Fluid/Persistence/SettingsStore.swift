@@ -79,7 +79,9 @@ final class SettingsStore: ObservableObject {
         case llama
         case mlx
 
-        var id: String { self.rawValue }
+        var id: String {
+            self.rawValue
+        }
 
         /// Default backend when no preference is stored.
         /// Apple Silicon → MLX (fastest Fluid-1 path). Intel → llama.cpp.
@@ -204,7 +206,9 @@ final class SettingsStore: ObservableObject {
         let uid: String
         var name: String
 
-        var id: String { self.uid }
+        var id: String {
+            self.uid
+        }
     }
 
     enum DictationPromptSelection: Equatable {
@@ -1821,7 +1825,9 @@ final class SettingsStore: ObservableObject {
     /// Direct Core Audio is the required capture backend. Legacy persisted
     /// preferences are intentionally ignored because AVAudioEngine can block or
     /// crash while audio devices are changing.
-    var experimentalDirectAudioCaptureEnabled: Bool { true }
+    var experimentalDirectAudioCaptureEnabled: Bool {
+        true
+    }
 
     var copyTranscriptionToClipboard: Bool {
         get { self.defaults.bool(forKey: Keys.copyTranscriptionToClipboard) }
@@ -4092,7 +4098,9 @@ final class SettingsStore: ObservableObject {
         case tab
         case space
 
-        var id: Self { self }
+        var id: Self {
+            self
+        }
 
         var title: String {
             switch self {
@@ -4127,7 +4135,9 @@ final class SettingsStore: ObservableObject {
         var aliases: [String]
         var isEnabled: Bool
 
-        var id: SpokenFormattingAction { self.action }
+        var id: SpokenFormattingAction {
+            self.action
+        }
 
         init(action: SpokenFormattingAction, aliases: [String], isEnabled: Bool = true) {
             self.action = action

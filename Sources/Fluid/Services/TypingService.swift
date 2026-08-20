@@ -73,8 +73,8 @@ final class TypingService {
         return !isSecureTextField && exactFocusIsActive
     }
 
-    // Logging toggle (off by default). Enable by setting env FLUID_TYPING_LOGS=1
-    // or UserDefaults bool for key "enableTypingLogs".
+    /// Logging toggle (off by default). Enable by setting env FLUID_TYPING_LOGS=1
+    /// or UserDefaults bool for key "enableTypingLogs".
     private nonisolated static var isLoggingEnabled: Bool {
         if let env = ProcessInfo.processInfo.environment["FLUID_TYPING_LOGS"], env == "1" { return true }
         return UserDefaults.standard.bool(forKey: "enableTypingLogs")
@@ -498,6 +498,7 @@ final class TypingService {
         tracksDictionaryCorrections: Bool = false,
         postInsertionKey: SettingsStore.SpokenSendKey? = nil,
         requiredFocusTarget: CapturedFocusTarget? = nil,
+        preserveTranscriptOnClipboard: Bool = false,
         completion: ((DeliveryOutcome) -> Void)? = nil
     ) {
         Task { @MainActor in
@@ -527,7 +528,8 @@ final class TypingService {
                     plan,
                     preferredTargetPID: preferredTargetPID,
                     textReadyAt: textReadyAt,
-                    tracksDictionaryCorrections: tracksDictionaryCorrections
+                    tracksDictionaryCorrections: tracksDictionaryCorrections,
+                    preserveTranscriptOnClipboard: preserveTranscriptOnClipboard
                 )
                 guard result.wasDispatched else {
                     completion?(.insertionFailed)
@@ -1200,7 +1202,7 @@ final class TypingService {
         return true
     }
 
-    // Why is it working now? And why is it not working now?
+    /// Why is it working now? And why is it not working now?
     private nonisolated func setTextViaValue(_ element: AXUIElement, _ text: String) -> Bool {
         let cfText = text as CFString
         let result = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, cfText)
@@ -1250,5 +1252,4 @@ final class TypingService {
             return false
         }
     }
-
 }

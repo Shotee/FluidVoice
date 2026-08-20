@@ -774,7 +774,6 @@ struct NotchExpandedView: View {
             )
     }
 
-    @ViewBuilder
     private func promptMenuRow(
         _ title: String,
         rowID: String,
@@ -1251,7 +1250,6 @@ struct NotchWaveformView: View {
         }
     }
 
-    @ViewBuilder
     private func barsView(using height: @escaping (Int) -> CGFloat) -> some View {
         HStack(spacing: self.barSpacing) {
             ForEach(0..<self.barCount, id: \.self) { index in
@@ -1981,7 +1979,6 @@ struct CompactNotchWaveformView: View {
         }
     }
 
-    @ViewBuilder
     private func barsView(using height: @escaping (Int) -> CGFloat) -> some View {
         HStack(spacing: self.barSpacing) {
             ForEach(0..<self.barCount, id: \.self) { index in

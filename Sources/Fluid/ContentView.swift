@@ -1634,7 +1634,8 @@ struct ContentView: View {
     private func deliverSpokenSend(
         _ outputPlan: DictationLiteralOutputPlan,
         targetPID: pid_t?,
-        textReadyAt: TimeInterval
+        textReadyAt: TimeInterval,
+        preserveTranscriptOnClipboard: Bool
     ) async -> TypingService.DeliveryOutcome {
         let sendsExistingDraft = outputPlan.plainText.isEmpty
         let outcome = await self.asr.typeOutputPlanToActiveFieldAndWait(
@@ -1642,7 +1643,8 @@ struct ContentView: View {
             preferredTargetPID: targetPID,
             textReadyAt: textReadyAt,
             postInsertionKey: self.settings.spokenSendKey,
-            requiredFocusTarget: self.recordingFocusTarget
+            requiredFocusTarget: self.recordingFocusTarget,
+            preserveTranscriptOnClipboard: preserveTranscriptOnClipboard
         )
         if outcome.didDispatchAction {
             NotchContentState.shared.setSpokenSendIndicatorState(.sent)
@@ -2461,7 +2463,8 @@ struct ContentView: View {
                 let deliveryOutcome = await self.deliverSpokenSend(
                     finalOutputPlan,
                     targetPID: typingTarget.pid,
-                    textReadyAt: finalTextReadyAt
+                    textReadyAt: finalTextReadyAt,
+                    preserveTranscriptOnClipboard: shouldCopyToClipboard
                 )
                 didTypeExternally = deliveryOutcome.didInsert
                 deliveryResult = deliveryOutcome.didInsert || deliveryOutcome.didDispatchAction

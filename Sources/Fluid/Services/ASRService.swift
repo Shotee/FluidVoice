@@ -3953,10 +3953,14 @@ final class ASRService: ObservableObject {
                     )
                     let priorityUIDs = SettingsStore.shared.microphonePriority.map(\.uid)
                     let livenessRequiresRecovery =
-                        (self.isRunning &&
-                            resolvedInput?.uid != microphonePreferenceCoordinator.confirmedActiveInputUID) ||
-                        (self.hasPreparedAudioCapture &&
-                            resolvedInput?.id != self.directAudioLifecycleController.snapshot.deviceID)
+                        (
+                            self.isRunning &&
+                                resolvedInput?.uid != microphonePreferenceCoordinator.confirmedActiveInputUID
+                        ) ||
+                        (
+                            self.hasPreparedAudioCapture &&
+                                resolvedInput?.id != self.directAudioLifecycleController.snapshot.deviceID
+                        )
                     let shouldReconcileInputSelection = AudioCaptureIdlePolicy.shouldReconcileInputSelection(
                         priorityInputUIDs: priorityUIDs,
                         migrationPending: migrationPending,
@@ -4898,7 +4902,8 @@ final class ASRService: ObservableObject {
         textReadyAt: TimeInterval? = nil,
         tracksDictionaryCorrections: Bool = false,
         postInsertionKey: SettingsStore.SpokenSendKey? = nil,
-        requiredFocusTarget: TypingService.CapturedFocusTarget? = nil
+        requiredFocusTarget: TypingService.CapturedFocusTarget? = nil,
+        preserveTranscriptOnClipboard: Bool = false
     ) async -> TypingService.DeliveryOutcome {
         let requestedAt = ProcessInfo.processInfo.systemUptime
         let textReadyAge = textReadyAt.map { Int(((requestedAt - $0) * 1000).rounded()) }
@@ -4915,7 +4920,8 @@ final class ASRService: ObservableObject {
                 textReadyAt: textReadyAt,
                 tracksDictionaryCorrections: tracksDictionaryCorrections,
                 postInsertionKey: postInsertionKey,
-                requiredFocusTarget: requiredFocusTarget
+                requiredFocusTarget: requiredFocusTarget,
+                preserveTranscriptOnClipboard: preserveTranscriptOnClipboard
             ) { outcome in
                 continuation.resume(returning: outcome)
             }

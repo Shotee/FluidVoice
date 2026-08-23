@@ -29,7 +29,9 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
     case overlay
     case dataAndDiagnostics
 
-    var id: Self { self }
+    var id: Self {
+        self
+    }
 
     var title: String {
         switch self {
@@ -48,7 +50,7 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
         case .dictation: return "keyboard"
         case .notifications: return "bell"
         case .audio: return "speaker.wave.2"
-        case .overlay: return "waveform"
+        case .overlay: return "rectangle.on.rectangle"
         case .dataAndDiagnostics: return "wrench.and.screwdriver"
         }
     }

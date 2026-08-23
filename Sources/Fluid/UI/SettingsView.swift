@@ -66,7 +66,7 @@ struct SettingsView: View {
     @State private var rollbackVersion: String = ""
     @State private var isRollingBack: Bool = false
     @State private var audioHistoryBudgetText: String = Self.audioBudgetText(for: SettingsStore.shared.audioHistoryBudgetGB)
-    @State private var audioHistoryUsageBytes: Int64 = DictationAudioHistoryStore.shared.audioUsageBytes()
+    @State private var audioHistoryUsageBytes: Int64 = 0
     @State private var draggedMicrophoneUID: String?
     @State private var hoveredMicrophoneUID: String?
 
@@ -593,57 +593,58 @@ struct SettingsView: View {
                 }
                 .shownInSettingsSection(.general, selectedSection: self.selectedSection)
 
-                // Microphone Permission Card
-                ThemedCard(style: .standard) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Label("Microphone Permission", systemImage: "mic.fill")
-                            .font(.headline)
-                            .foregroundStyle(.primary)
+                self.analyticsSettingsCard
+                    .shownInSettingsSection(.general, selectedSection: self.selectedSection)
 
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack(spacing: 10) {
-                                Circle()
-                                    .fill(self.asr.micStatus == .authorized ? self.theme.palette.success : self.theme.palette.warning)
-                                    .frame(width: 8, height: 8)
+                if self.asr.micStatus != .authorized {
+                    // Only surface microphone permission when the user needs to act.
+                    ThemedCard(style: .standard) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Label("Microphone Permission", systemImage: "mic.fill")
+                                .font(.headline)
+                                .foregroundStyle(.primary)
 
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(
-                                        self.asr.micStatus == .authorized ? "Microphone access granted" :
-                                            self.asr.micStatus == .denied ? "Microphone access denied" :
-                                            "Microphone access not determined"
-                                    )
-                                    .font(self.theme.typography.bodyStrong)
-                                    .foregroundStyle(self.asr.micStatus == .authorized ? .primary : self.theme.palette.warning)
+                            VStack(alignment: .leading, spacing: 12) {
+                                HStack(spacing: 10) {
+                                    Circle()
+                                        .fill(self.theme.palette.warning)
+                                        .frame(width: 8, height: 8)
 
-                                    if self.asr.micStatus != .authorized {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(
+                                            self.asr.micStatus == .denied
+                                                ? "Microphone access denied"
+                                                : "Microphone access not determined"
+                                        )
+                                        .font(self.theme.typography.bodyStrong)
+                                        .foregroundStyle(self.theme.palette.warning)
+
                                         Text("Microphone access is required for voice recording")
                                             .font(self.theme.typography.bodySmall)
                                             .foregroundStyle(self.settingsSecondaryText)
                                     }
-                                }
-                                Spacer()
+                                    Spacer()
 
-                                if self.asr.micStatus == .notDetermined {
-                                    Button {
-                                        self.asr.requestMicAccess()
-                                    } label: {
-                                        Label("Grant Access", systemImage: "mic.fill")
+                                    if self.asr.micStatus == .notDetermined {
+                                        Button {
+                                            self.asr.requestMicAccess()
+                                        } label: {
+                                            Label("Grant Access", systemImage: "mic.fill")
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                        .tint(self.theme.palette.accent)
+                                        .controlSize(.regular)
+                                    } else if self.asr.micStatus == .denied {
+                                        Button {
+                                            self.asr.openSystemSettingsForMic()
+                                        } label: {
+                                            Label("Open Settings", systemImage: "gear")
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.regular)
                                     }
-                                    .buttonStyle(.borderedProminent)
-                                    .tint(self.theme.palette.accent)
-                                    .controlSize(.regular)
-                                } else if self.asr.micStatus == .denied {
-                                    Button {
-                                        self.asr.openSystemSettingsForMic()
-                                    } label: {
-                                        Label("Open Settings", systemImage: "gear")
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.regular)
                                 }
-                            }
 
-                            if self.asr.micStatus != .authorized {
                                 self.instructionsBox(
                                     title: "How to enable microphone access:",
                                     steps: self.asr.micStatus == .notDetermined
@@ -656,10 +657,10 @@ struct SettingsView: View {
                                 )
                             }
                         }
+                        .padding(16)
                     }
-                    .padding(16)
+                    .shownInSettingsSection(.dictation, selectedSection: self.selectedSection)
                 }
-                .shownInSettingsSection(.dictation, selectedSection: self.selectedSection)
 
                 // Global Hotkey Card
                 ThemedCard(style: .standard) {
@@ -1256,7 +1257,7 @@ struct SettingsView: View {
                 // Overlay Settings Card
                 ThemedCard(style: .standard) {
                     VStack(alignment: .leading, spacing: 14) {
-                        Label("Overlay", systemImage: "waveform")
+                        Label("Overlay", systemImage: "rectangle.on.rectangle")
                             .font(.headline)
                             .foregroundStyle(.primary)
 
@@ -1469,9 +1470,6 @@ struct SettingsView: View {
                 }
                 .shownInSettingsSection(.overlay, selectedSection: self.selectedSection)
 
-                self.analyticsSettingsCard
-                    .shownInSettingsSection(.dataAndDiagnostics, selectedSection: self.selectedSection)
-
                 // Backup & Restore Card
                 ThemedCard(style: .standard) {
                     self.backupUtilityRow()
@@ -1569,55 +1567,8 @@ struct SettingsView: View {
                 }
             )
         }
-        .onAppear {
-            Task { @MainActor in
-                // Ensure the shared audio startup gate is scheduled. Safe to call repeatedly.
-                await AudioStartupGate.shared.scheduleOpenAfterInitialUISettled()
-                await AudioStartupGate.shared.waitUntilOpen()
-
-                self.refreshDevices()
-
-                // Sync input device selection after refresh
-                if !self.inputDevices.isEmpty {
-                    let defaultInput = AudioDevice.getDefaultInputDevice()
-                    self.cachedDefaultInputUID = defaultInput?.uid ?? ""
-                    if let selectedInput = self.appServices.microphonePreferenceCoordinator
-                        .reconcileMicrophoneSelection(
-                            availableInputs: self.inputDevices,
-                            defaultInputUID: self.cachedDefaultInputUID
-                        )
-                    {
-                        self.selectedInputUID = selectedInput.uid
-                    }
-                }
-
-                // Sync output device selection after refresh
-                if !self.outputDevices.isEmpty {
-                    let outputValid = self.outputDevices.contains { $0.uid == self.selectedOutputUID }
-                    if !outputValid || self.selectedOutputUID.isEmpty {
-                        if let prefUID = SettingsStore.shared.preferredOutputDeviceUID,
-                           self.outputDevices.contains(where: { $0.uid == prefUID })
-                        {
-                            self.selectedOutputUID = prefUID
-                        } else if let defaultUID = AudioDevice.getDefaultOutputDevice()?.uid,
-                                  self.outputDevices.contains(where: { $0.uid == defaultUID })
-                        {
-                            self.selectedOutputUID = defaultUID
-                        } else {
-                            self.selectedOutputUID = self.outputDevices.first?.uid ?? ""
-                        }
-                    }
-                }
-
-                // CRITICAL FIX: Populate cached default device names after onAppear, not during view body evaluation.
-                // This avoids the CoreAudio/SwiftUI AttributeGraph race condition that causes EXC_BAD_ACCESS.
-                let defaultInput = AudioDevice.getDefaultInputDevice()
-                self.cachedDefaultInputUID = defaultInput?.uid ?? ""
-                self.cachedDefaultOutputName = AudioDevice.getDefaultOutputDevice()?.name ?? ""
-                self.refreshRollbackState()
-                self.settings.refreshLaunchAtStartupStatus(clearError: true, logMismatch: false)
-                self.refreshAudioHistoryUsage()
-            }
+        .task(id: self.selectedSection) {
+            await self.prepareSelectedSection()
         }
         .onChange(of: self.visualizerNoiseThreshold) { _, newValue in
             SettingsStore.shared.visualizerNoiseThreshold = newValue
@@ -2589,6 +2540,83 @@ private extension SettingsView {
                 .foregroundStyle(color)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+private extension SettingsView {
+    func prepareSelectedSection() async {
+        do {
+            try await Task.sleep(nanoseconds: self.accessibilityReduceMotion ? 120_000_000 : 240_000_000)
+        } catch {
+            return
+        }
+
+        guard !Task.isCancelled else { return }
+        switch self.selectedSection {
+        case .general:
+            self.refreshRollbackState()
+            self.settings.refreshLaunchAtStartupStatus(clearError: true, logMismatch: false)
+        case .audio:
+            await self.prepareAudioSettings()
+        case .dictation:
+            await self.refreshAudioHistoryUsageInBackground()
+        case .notifications, .overlay, .dataAndDiagnostics:
+            break
+        }
+    }
+
+    func prepareAudioSettings() async {
+        // Keep Core Audio initialization out of the navigation transaction.
+        await AudioStartupGate.shared.scheduleOpenAfterInitialUISettled()
+        await AudioStartupGate.shared.waitUntilOpen()
+        guard !Task.isCancelled else { return }
+
+        self.refreshDevices()
+
+        if !self.inputDevices.isEmpty {
+            let defaultInput = AudioDevice.getDefaultInputDevice()
+            self.cachedDefaultInputUID = defaultInput?.uid ?? ""
+            if let selectedInput = self.appServices.microphonePreferenceCoordinator
+                .reconcileMicrophoneSelection(
+                    availableInputs: self.inputDevices,
+                    defaultInputUID: self.cachedDefaultInputUID
+                )
+            {
+                self.selectedInputUID = selectedInput.uid
+            }
+        }
+
+        if !self.outputDevices.isEmpty {
+            let outputValid = self.outputDevices.contains { $0.uid == self.selectedOutputUID }
+            if !outputValid || self.selectedOutputUID.isEmpty {
+                if let prefUID = SettingsStore.shared.preferredOutputDeviceUID,
+                   self.outputDevices.contains(where: { $0.uid == prefUID })
+                {
+                    self.selectedOutputUID = prefUID
+                } else if let defaultUID = AudioDevice.getDefaultOutputDevice()?.uid,
+                          self.outputDevices.contains(where: { $0.uid == defaultUID })
+                {
+                    self.selectedOutputUID = defaultUID
+                } else {
+                    self.selectedOutputUID = self.outputDevices.first?.uid ?? ""
+                }
+            }
+        }
+
+        // Cache hardware names outside body evaluation to avoid the Core Audio/AttributeGraph race.
+        let defaultInput = AudioDevice.getDefaultInputDevice()
+        self.cachedDefaultInputUID = defaultInput?.uid ?? ""
+        self.cachedDefaultOutputName = AudioDevice.getDefaultOutputDevice()?.name ?? ""
+    }
+
+    func refreshAudioHistoryUsageInBackground() async {
+        let usageBytes = await Task.detached(priority: .utility) {
+            DictationAudioHistoryStore.shared.audioUsageBytes()
+        }.value
+        guard !Task.isCancelled else { return }
+
+        self.audioHistoryUsageBytes = usageBytes
+        self.audioHistoryBudgetText = Self.audioBudgetText(for: SettingsStore.shared.audioHistoryBudgetGB)
     }
 }
 

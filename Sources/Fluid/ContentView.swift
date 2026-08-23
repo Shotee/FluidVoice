@@ -228,6 +228,7 @@ struct ContentView: View {
     @State private var selectedSidebarItem: SidebarItem?
     @State private var previousSidebarItem: SidebarItem? = nil // Track previous for mode transitions
     @State private var settingsNavigation = SettingsNavigationState()
+
     @State private var isSettingsEntryHovered = false
     @State private var isSettingsBackHovered = false
     @State private var playgroundUsed: Bool = SettingsStore.shared.playgroundUsed
@@ -973,23 +974,16 @@ struct ContentView: View {
     }
 
     private func navigateToApp(_ destination: SidebarItem) {
-        withAnimation(self.sidebarModeAnimation) {
-            self.settingsNavigation.leaveForApp()
-            self.selectedSidebarItem = destination
-        }
+        self.settingsNavigation.leaveForApp()
+        self.selectedSidebarItem = destination
     }
 
     private func openSettings(_ section: SettingsSection) {
-        withAnimation(self.sidebarModeAnimation) {
-            self.settingsNavigation.present(section, returningTo: self.selectedSidebarItem)
-            self.selectedSidebarItem = nil
-        }
+        self.settingsNavigation.present(section, returningTo: self.selectedSidebarItem)
     }
 
     private func closeSettings() {
-        withAnimation(self.sidebarModeAnimation) {
-            self.selectedSidebarItem = self.settingsNavigation.dismiss()
-        }
+        self.selectedSidebarItem = self.settingsNavigation.dismiss()
     }
 
     private func resetPendingShortcutState() {
@@ -1171,15 +1165,26 @@ struct ContentView: View {
         NSWorkspace.shared.open(url)
     }
 
-    @ViewBuilder
     private var sidebarContent: some View {
-        if self.settingsNavigation.isPresented {
-            self.settingsSidebarView
-                .transition(self.settingsSidebarTransition)
-        } else {
+        ZStack {
+            // Keep both sidebars mounted so navigation feedback never waits on view construction.
             self.appSidebarView
-                .transition(self.appSidebarTransition)
+                .opacity(self.settingsNavigation.isPresented ? 0 : 1)
+                .offset(x: self.settingsNavigation.isPresented ? -self.sidebarTransitionDistance : 0)
+                .allowsHitTesting(!self.settingsNavigation.isPresented)
+                .accessibilityHidden(self.settingsNavigation.isPresented)
+
+            self.settingsSidebarView
+                .background(self.theme.palette.sidebarBackground)
+                .opacity(self.settingsNavigation.isPresented ? 1 : 0)
+                .offset(x: self.settingsNavigation.isPresented ? 0 : self.sidebarTransitionDistance)
+                .allowsHitTesting(self.settingsNavigation.isPresented)
+                .accessibilityHidden(!self.settingsNavigation.isPresented)
         }
+        .clipped()
+        .navigationTitle(self.settingsNavigation.isPresented ? "Settings" : "FluidVoice")
+        .tint(self.theme.palette.accent)
+        .animation(self.modeTransitionAnimation, value: self.settingsNavigation.isPresented)
     }
 
     private var appSidebarView: some View {
@@ -1216,41 +1221,40 @@ struct ContentView: View {
         }
         .listStyle(.sidebar)
         .animation(nil, value: self.selectedSidebarItem)
-        .navigationTitle("FluidVoice")
-        .tint(self.theme.palette.accent)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             self.settingsEntryButton
         }
-        .animation(self.sidebarModeAnimation, value: self.settingsNavigation.isPresented)
     }
 
     private var settingsSidebarView: some View {
         VStack(spacing: 0) {
-            HStack(spacing: self.theme.metrics.spacing.sm) {
-                Button {
-                    self.closeSettings()
-                } label: {
+            Button {
+                self.closeSettings()
+            } label: {
+                HStack(spacing: self.theme.metrics.spacing.sm) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 18, height: 28)
+
+                    Text("Back to app")
+                        .font(self.theme.typography.sidebarItem)
+
+                    Spacer(minLength: 0)
                 }
-                .buttonStyle(SidebarChromeButtonStyle(
-                    isHovered: self.isSettingsBackHovered,
-                    reduceMotion: self.accessibilityReduceMotion
-                ))
-                .onHover { self.isSettingsBackHovered = $0 }
-                .help("Back to FluidVoice")
-                .accessibilityLabel("Back to FluidVoice")
-
-                Text("Settings")
-                    .font(.system(size: 15, weight: .semibold))
-
-                Spacer(minLength: 0)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, self.theme.metrics.spacing.md)
+                .padding(.top, self.theme.metrics.spacing.sm)
+                .padding(.bottom, self.theme.metrics.spacing.xs)
+                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, self.theme.metrics.spacing.md)
-            .padding(.top, self.theme.metrics.spacing.sm)
-            .padding(.bottom, self.theme.metrics.spacing.xs)
+            .buttonStyle(SidebarChromeButtonStyle(
+                isHovered: self.isSettingsBackHovered,
+                reduceMotion: self.accessibilityReduceMotion
+            ))
+            .onHover { self.isSettingsBackHovered = $0 }
+            .help("Back to FluidVoice")
+            .accessibilityLabel("Back to FluidVoice")
 
             List(selection: Binding(
                 get: { self.settingsNavigation.selectedSection },
@@ -1271,16 +1275,17 @@ struct ContentView: View {
                             Text(section.title)
                         }
                         .font(self.theme.typography.sidebarItem)
-                        .frame(minHeight: 28, alignment: .leading)
                     }
+                    .sidebarOptionHover(
+                        isSelected: self.settingsNavigation.selectedSection == section,
+                        reduceMotion: self.accessibilityReduceMotion
+                    )
                 }
             }
             .listStyle(.sidebar)
+            .padding(.top, self.theme.metrics.spacing.sm)
             .animation(nil, value: self.settingsNavigation.selectedSection)
         }
-        .navigationTitle("Settings")
-        .tint(self.theme.palette.accent)
-        .animation(self.sidebarModeAnimation, value: self.settingsNavigation.isPresented)
     }
 
     private var settingsEntryButton: some View {
@@ -1302,8 +1307,8 @@ struct ContentView: View {
                     .foregroundStyle(.tertiary)
             }
             .font(self.theme.typography.sidebarItem)
-            .padding(.horizontal, self.theme.metrics.spacing.sm)
-            .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+            .padding(.horizontal, self.theme.metrics.spacing.md)
+            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(SidebarChromeButtonStyle(
@@ -1313,28 +1318,17 @@ struct ContentView: View {
         .onHover { self.isSettingsEntryHovered = $0 }
         .help("Settings")
         .accessibilityLabel("Settings")
-        .padding(.horizontal, self.theme.metrics.spacing.sm)
-        .padding(.vertical, self.theme.metrics.spacing.sm)
     }
 
-    private var sidebarModeAnimation: Animation {
-        self.accessibilityReduceMotion
-            ? .easeOut(duration: 0.12)
-            : .spring(response: 0.3, dampingFraction: 1)
+    private var modeTransitionAnimation: Animation {
+        let duration = self.settingsNavigation.isPresented ? 0.16 : 0.1
+        return self.accessibilityReduceMotion
+            ? .easeOut(duration: 0.08)
+            : .snappy(duration: duration, extraBounce: 0)
     }
 
-    private var settingsSidebarTransition: AnyTransition {
-        if self.accessibilityReduceMotion {
-            return .opacity
-        }
-        return .move(edge: .trailing).combined(with: .opacity)
-    }
-
-    private var appSidebarTransition: AnyTransition {
-        if self.accessibilityReduceMotion {
-            return .opacity
-        }
-        return .move(edge: .leading).combined(with: .opacity)
+    private var sidebarTransitionDistance: CGFloat {
+        self.accessibilityReduceMotion ? 0 : 8
     }
 
     private func sidebarSectionHeader(_ title: String) -> some View {
@@ -1348,11 +1342,24 @@ struct ContentView: View {
 
     private func sidebarNavigationLink(_ item: SidebarItem, title: String, systemImage: String) -> some View {
         NavigationLink(value: item) {
-            Label(title, systemImage: systemImage)
-                .font(self.theme.typography.sidebarItem)
-                .frame(minHeight: 24, alignment: .leading)
-                .padding(.vertical, self.theme.metrics.spacing.xs / 2)
+            HStack(spacing: self.theme.metrics.spacing.sm) {
+                Image(nsImage: SidebarSymbolCache.image(named: systemImage))
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16, height: 16)
+                    .accessibilityHidden(true)
+
+                Text(title)
+            }
+            .font(self.theme.typography.sidebarItem)
+            .padding(.vertical, self.theme.metrics.spacing.xs / 2)
         }
+        .sidebarOptionHover(
+            isSelected: self.selectedSidebarItem == item,
+            reduceMotion: self.accessibilityReduceMotion
+        )
     }
 
     private var themePreferenceButton: some View {
@@ -1384,18 +1391,29 @@ struct ContentView: View {
             Color(nsColor: .windowBackgroundColor)
                 .ignoresSafeArea()
 
-            self.detailContent
-                .transaction { transaction in
-                    transaction.animation = nil
-                }
+            // Preserve the app destination so Back never waits on expensive detail initialization.
+            self.appDetailContent
+                .opacity(self.settingsNavigation.isPresented ? 0 : 1)
+                .offset(x: self.settingsNavigation.isPresented ? -6 : 0)
+                .allowsHitTesting(!self.settingsNavigation.isPresented)
+                .accessibilityHidden(self.settingsNavigation.isPresented)
+
+            if self.settingsNavigation.isPresented {
+                self.preferencesView
+                    .transition(self.settingsDetailTransition)
+            }
         }
+        .animation(self.modeTransitionAnimation, value: self.settingsNavigation.isPresented)
     }
 
-    private var detailContent: AnyView {
-        if self.settingsNavigation.isPresented {
-            return AnyView(self.preferencesView)
+    private var settingsDetailTransition: AnyTransition {
+        if self.accessibilityReduceMotion {
+            return .opacity
         }
+        return .offset(x: 8).combined(with: .opacity)
+    }
 
+    private var appDetailContent: AnyView {
         switch self.selectedSidebarItem ?? .welcome {
         case .welcome:
             return AnyView(self.welcomeView)
@@ -4555,6 +4573,44 @@ extension ContentView {
 
 // swiftlint:enable type_body_length
 
+@MainActor
+private enum SidebarSymbolCache {
+    private static let symbolNames = [
+        "waveform",
+        "brain",
+        "text.book.closed.fill",
+        "terminal.fill",
+        "doc.text.fill",
+        "clock.arrow.circlepath",
+        "chart.bar.fill",
+        "house.fill",
+        "doc.text.magnifyingglass",
+        "envelope.fill",
+    ]
+
+    private static let images: [String: NSImage] = {
+        let configuration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+            .applying(.preferringHierarchical())
+        var images: [String: NSImage] = [:]
+
+        for name in symbolNames {
+            guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+                .withSymbolConfiguration(configuration)
+            else { continue }
+
+            image.isTemplate = true
+            image.cacheMode = .always
+            images[name] = image
+        }
+
+        return images
+    }()
+
+    static func image(named name: String) -> NSImage {
+        self.images[name] ?? NSImage(systemSymbolName: "questionmark", accessibilityDescription: nil) ?? NSImage()
+    }
+}
+
 private struct SidebarChromeButtonStyle: ButtonStyle {
     let isHovered: Bool
     let reduceMotion: Bool
@@ -4578,6 +4634,36 @@ private struct SidebarChromeButtonStyle: ButtonStyle {
             return 0.12
         }
         return self.isHovered ? 0.08 : 0
+    }
+}
+
+private extension View {
+    func sidebarOptionHover(isSelected: Bool, reduceMotion: Bool) -> some View {
+        modifier(SidebarOptionHoverModifier(isSelected: isSelected, reduceMotion: reduceMotion))
+    }
+}
+
+private struct SidebarOptionHoverModifier: ViewModifier {
+    let isSelected: Bool
+    let reduceMotion: Bool
+
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.primary.opacity(self.hoverOpacity))
+            )
+            .contentShape(Rectangle())
+            .onHover { self.isHovered = $0 }
+            .animation(.easeOut(duration: self.reduceMotion ? 0.08 : 0.12), value: self.isHovered)
+    }
+
+    private var hoverOpacity: Double {
+        guard self.isHovered else { return 0 }
+        return self.isSelected ? 0.04 : 0.07
     }
 }
 

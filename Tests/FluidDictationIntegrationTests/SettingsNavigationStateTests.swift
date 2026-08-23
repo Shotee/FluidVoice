@@ -49,5 +49,6 @@ final class SettingsNavigationStateTests: XCTestCase {
             ["General", "Dictation", "Notifications", "Audio", "Overlay", "Data & Diagnostics"]
         )
         XCTAssertTrue(SettingsSection.allCases.allSatisfy { !$0.systemImage.isEmpty })
+        XCTAssertEqual(SettingsSection.overlay.systemImage, "rectangle.on.rectangle")
     }
 }

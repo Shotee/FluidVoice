@@ -4655,6 +4655,8 @@ private struct SidebarOptionHoverModifier: ViewModifier {
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(Color.primary.opacity(self.hoverOpacity))
+                    // Match the sidebar List's three-point vertical row padding without changing layout.
+                    .padding(.vertical, -3)
             )
             .contentShape(Rectangle())
             .onHover { self.isHovered = $0 }

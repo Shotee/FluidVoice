@@ -415,12 +415,14 @@ final class TypingService {
         _ text: String,
         preferredTargetPID: pid_t?,
         textReadyAt: TimeInterval?,
+        toggleStopRequestedAt: TimeInterval? = nil,
         preserveTranscriptOnClipboard: Bool = false
     ) async -> TextDeliveryResult {
         await self.typeOutputPlanInstantly(
             .plain(text),
             preferredTargetPID: preferredTargetPID,
             textReadyAt: textReadyAt,
+            toggleStopRequestedAt: toggleStopRequestedAt,
             preserveTranscriptOnClipboard: preserveTranscriptOnClipboard
         )
     }
@@ -430,6 +432,7 @@ final class TypingService {
         _ plan: DictationLiteralOutputPlan,
         preferredTargetPID: pid_t?,
         textReadyAt: TimeInterval?,
+        toggleStopRequestedAt: TimeInterval? = nil,
         tracksDictionaryCorrections: Bool = false,
         preserveTranscriptOnClipboard: Bool = false
     ) async -> TextDeliveryResult {
@@ -446,7 +449,15 @@ final class TypingService {
         guard !text.isEmpty else {
             self.bench("request_return reason=empty_text")
             self.log("[TypingService] ERROR: Empty text provided, aborting")
-            return .recoverableFailure(.emptyText)
+            let result = TextDeliveryResult.recoverableFailure(.emptyText)
+            self.recordInsertionLatency(
+                path: .notAttempted,
+                result: result,
+                requestedAt: requestedAt,
+                textReadyAt: textReadyAt,
+                toggleStopRequestedAt: toggleStopRequestedAt
+            )
+            return result
         }
 
         // Check accessibility permissions first
@@ -454,33 +465,56 @@ final class TypingService {
             self.bench("request_return reason=accessibility_not_trusted")
             self.log("[TypingService] ERROR: Accessibility permissions required for text injection")
             self.log("[TypingService] Current accessibility status: \(AXIsProcessTrusted())")
-            return .recoverableFailure(.accessibilityNotTrusted)
+            let result = TextDeliveryResult.recoverableFailure(.accessibilityNotTrusted)
+            self.recordInsertionLatency(
+                path: .notAttempted,
+                result: result,
+                requestedAt: requestedAt,
+                textReadyAt: textReadyAt,
+                toggleStopRequestedAt: toggleStopRequestedAt
+            )
+            return result
         }
 
         let usesClipboard = mode == .reliablePaste ||
             self.ghosttyTargetPID(preferredTargetPID: preferredTargetPID) != nil
         let result: TextDeliveryResult
+        let deliveryPath: AnalyticsInsertionPath
+        var dispatchedAt: TimeInterval?
         if usesClipboard {
+            deliveryPath = .clipboard
             result = await PasteDeliveryCoordinator.shared.deliver(
                 text,
-                preserveTranscriptOnClipboard: preserveTranscriptOnClipboard
+                preserveTranscriptOnClipboard: preserveTranscriptOnClipboard,
+                onCommandPosted: { dispatchedAt = $0 }
             )
         } else if await self.insertTextDirectlyOffMain(text, preferredTargetPID: preferredTargetPID) {
+            deliveryPath = .direct
             if preserveTranscriptOnClipboard {
                 _ = ClipboardService.copyToClipboard(text)
             }
             result = .commandPosted
         } else {
+            deliveryPath = .clipboardFallback
             self.log("[TypingService] Direct insertion failed; using non-blocking clipboard fallback")
             result = await PasteDeliveryCoordinator.shared.deliver(
                 text,
-                preserveTranscriptOnClipboard: preserveTranscriptOnClipboard
+                preserveTranscriptOnClipboard: preserveTranscriptOnClipboard,
+                onCommandPosted: { dispatchedAt = $0 }
             )
         }
 
-        let completedAt = ProcessInfo.processInfo.systemUptime
+        let completedAt = dispatchedAt ?? ProcessInfo.processInfo.systemUptime
         self.bench(
             "complete result=\(String(describing: result)) totalMs=\(Self.elapsedMs(from: requestedAt, to: completedAt)) textReadyToCompleteMs=\(textReadyAt.map { String(Self.elapsedMs(from: $0, to: completedAt)) } ?? "nil")"
+        )
+        self.recordInsertionLatency(
+            path: deliveryPath,
+            result: result,
+            requestedAt: requestedAt,
+            textReadyAt: textReadyAt,
+            toggleStopRequestedAt: toggleStopRequestedAt,
+            completedAt: completedAt
         )
         if result.wasDispatched, tracksDictionaryCorrections {
             AutomaticDictionaryCorrectionTracker.shared.beginObservingInsertion(
@@ -495,6 +529,7 @@ final class TypingService {
         _ plan: DictationLiteralOutputPlan,
         preferredTargetPID: pid_t?,
         textReadyAt: TimeInterval?,
+        toggleStopRequestedAt: TimeInterval? = nil,
         tracksDictionaryCorrections: Bool = false,
         postInsertionKey: SettingsStore.SpokenSendKey? = nil,
         requiredFocusTarget: CapturedFocusTarget? = nil,
@@ -528,6 +563,7 @@ final class TypingService {
                     plan,
                     preferredTargetPID: preferredTargetPID,
                     textReadyAt: textReadyAt,
+                    toggleStopRequestedAt: toggleStopRequestedAt,
                     tracksDictionaryCorrections: tracksDictionaryCorrections,
                     preserveTranscriptOnClipboard: preserveTranscriptOnClipboard
                 )
@@ -572,6 +608,47 @@ final class TypingService {
 
     private func bench(_ message: String) {
         DebugLogger.shared.benchmark("TYPING_BENCH", message: message, source: "TypingBenchmark")
+    }
+
+    private func recordInsertionLatency(
+        path: AnalyticsInsertionPath,
+        result: TextDeliveryResult,
+        requestedAt: TimeInterval,
+        textReadyAt: TimeInterval?,
+        toggleStopRequestedAt: TimeInterval?,
+        completedAt: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) {
+        let outcome = Self.analyticsOutcome(for: result)
+        let isClipboardDispatch = outcome == .dispatched &&
+            (path == .clipboard || path == .clipboardFallback)
+        AnalyticsService.shared.recordInsertionLatency(
+            path: path,
+            outcome: outcome,
+            requestMilliseconds: max(0, Self.elapsedMs(from: requestedAt, to: completedAt)),
+            readyMilliseconds: textReadyAt.map {
+                max(0, Self.elapsedMs(from: $0, to: completedAt))
+            },
+            toggleStopMilliseconds: isClipboardDispatch ? toggleStopRequestedAt.map {
+                max(0, Self.elapsedMs(from: $0, to: completedAt))
+            } : nil
+        )
+    }
+
+    private static func analyticsOutcome(for result: TextDeliveryResult) -> AnalyticsInsertionOutcome {
+        switch result {
+        case .commandPosted:
+            .dispatched
+        case let .recoverableFailure(failure):
+            switch failure {
+            case .emptyText: .emptyText
+            case .accessibilityNotTrusted: .accessibilityNotTrusted
+            case .clipboardSnapshotFailed: .clipboardSnapshotFailed
+            case .clipboardWriteFailed: .clipboardWriteFailed
+            case .pasteCommandFailed: .pasteCommandFailed
+            case .targetUnavailable: .targetUnavailable
+            case .targetRestoreFailed: .targetRestoreFailed
+            }
+        }
     }
 
     private static func elapsedMs(since start: TimeInterval) -> Int {

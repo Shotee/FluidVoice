@@ -569,7 +569,8 @@ final class PasteDeliveryCoordinator {
 
     func deliver(
         _ text: String,
-        preserveTranscriptOnClipboard: Bool
+        preserveTranscriptOnClipboard: Bool,
+        onCommandPosted: ((TimeInterval) -> Void)? = nil
     ) async -> TextDeliveryResult {
         await self.acquireDeliverySlot()
         defer { self.releaseDeliverySlot() }
@@ -603,6 +604,8 @@ final class PasteDeliveryCoordinator {
             self.log("delivery_failed generation=\(generation) reason=paste_command_failed")
             return .recoverableFailure(.pasteCommandFailed)
         }
+        let commandPostedAt = ProcessInfo.processInfo.systemUptime
+        onCommandPosted?(commandPostedAt)
 
         self.log(
             "command_posted generation=\(generation) totalMs=\(Self.elapsedMs(since: startedAt))"

@@ -1635,6 +1635,7 @@ struct ContentView: View {
         _ outputPlan: DictationLiteralOutputPlan,
         targetPID: pid_t?,
         textReadyAt: TimeInterval,
+        toggleStopRequestedAt: TimeInterval?,
         preserveTranscriptOnClipboard: Bool
     ) async -> TypingService.DeliveryOutcome {
         let sendsExistingDraft = outputPlan.plainText.isEmpty
@@ -1642,6 +1643,7 @@ struct ContentView: View {
             outputPlan,
             preferredTargetPID: targetPID,
             textReadyAt: textReadyAt,
+            toggleStopRequestedAt: toggleStopRequestedAt,
             postInsertionKey: self.settings.spokenSendKey,
             requiredFocusTarget: self.recordingFocusTarget,
             preserveTranscriptOnClipboard: preserveTranscriptOnClipboard
@@ -2090,7 +2092,10 @@ struct ContentView: View {
 
     // MARK: - Stop and Process Transcription
 
-    private func stopAndProcessTranscription(route: DictationOutputRoute = .normal) async {
+    private func stopAndProcessTranscription(
+        route: DictationOutputRoute = .normal,
+        toggleStopRequestedAt: TimeInterval? = nil
+    ) async {
         DebugLogger.shared.debug("stopAndProcessTranscription called", source: "ContentView")
         DebugLogger.shared.info("Output route selected: \(route.rawValue)", source: "ContentView")
         self.appBench("stop_path_enter route=\(route.rawValue)")
@@ -2464,6 +2469,7 @@ struct ContentView: View {
                     finalOutputPlan,
                     targetPID: typingTarget.pid,
                     textReadyAt: finalTextReadyAt,
+                    toggleStopRequestedAt: toggleStopRequestedAt,
                     preserveTranscriptOnClipboard: shouldCopyToClipboard
                 )
                 didTypeExternally = deliveryOutcome.didInsert
@@ -2478,6 +2484,7 @@ struct ContentView: View {
                     finalOutputPlan,
                     preferredTargetPID: typingTarget.pid,
                     textReadyAt: finalTextReadyAt,
+                    toggleStopRequestedAt: toggleStopRequestedAt,
                     tracksDictionaryCorrections: true,
                     preserveTranscriptOnClipboard: shouldCopyToClipboard
                 )
@@ -3583,10 +3590,13 @@ struct ContentView: View {
                 )
                 self.beginDictationRecording(for: .primary, mode: .dictate)
             },
-            stopAndProcessCallback: {
+            stopAndProcessCallback: { toggleStopRequestedAt in
                 let route = self.currentDictationOutputRouteForHotkeyStop()
                 DebugLogger.shared.info("Hotkey stop callback using route: \(route.rawValue)", source: "ContentView")
-                await self.stopAndProcessTranscription(route: route)
+                await self.stopAndProcessTranscription(
+                    route: route,
+                    toggleStopRequestedAt: toggleStopRequestedAt
+                )
             },
             promptModeCallback: {
                 DebugLogger.shared.info("Prompt mode triggered", source: "ContentView")

@@ -2878,22 +2878,20 @@ struct AnalyticsConfirmationView: View {
             Text("Stop sharing detailed anonymous analytics?")
                 .font(.headline)
 
-            Text(
-                "FluidVoice will stop sharing feature, onboarding, and model metrics. " +
-                    "One anonymous activity signal will still be recorded each day and sent weekly so we can measure active use. " +
-                    "We never collect audio, transcription text, prompts, or other personal information."
-            )
-            .font(self.theme.typography.bodySmall)
-            .foregroundStyle(.secondary)
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(self.theme.palette.cardBackground)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(self.theme.palette.cardBorder.opacity(0.6), lineWidth: 1)
-            )
+            Text("We never collect audio, transcription text, prompts, or other personal information.")
+                .font(self.theme.typography.bodySmall)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(self.theme.palette.cardBackground)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(self.theme.palette.cardBorder.opacity(0.6), lineWidth: 1)
+                )
 
             Text(self.contactInfoText)
                 .font(self.theme.typography.bodySmall)

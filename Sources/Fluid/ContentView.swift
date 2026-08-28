@@ -247,6 +247,11 @@ struct ContentView: View {
     @State private var recordingAppInfo: (name: String, bundleId: String, windowTitle: String)? = nil
     @State private var recordingPrecedingText: String = ""
     @State private var recordingFocusTarget: TypingService.CapturedFocusTarget? = nil
+    @State private var inlineDictationCoordinator = InlineDictationCoordinator(
+        adapter: SystemInlineAccessibilityAdapter()
+    )
+    @State private var inlineDictationSessionStarted = false
+    @State private var inlineDictationInterrupted = false
 
     // Command Mode State
     // @State private var showCommandMode: Bool = false
@@ -269,6 +274,7 @@ struct ContentView: View {
     @State private var enableDebugLogs: Bool = SettingsStore.shared.enableDebugLogs
     @State private var hotkeyMode: HotkeyActivationMode = SettingsStore.shared.hotkeyMode
     @State private var enableStreamingPreview: Bool = SettingsStore.shared.enableStreamingPreview
+    @State private var inlineLiveTypingEnabled: Bool = SettingsStore.shared.inlineLiveTypingEnabled
     @State private var copyToClipboard: Bool = SettingsStore.shared.copyTranscriptionToClipboard
 
     // Preferences Tab State
@@ -365,6 +371,11 @@ struct ContentView: View {
             .onReceive(self.asr.$partialTranscription) { text in
                 self.handleSpokenSendPartialTranscription(text)
             }
+            .onReceive(self.asr.$partialUpdate) { update in
+                if let update {
+                    self.handleInlinePartialUpdate(update)
+                }
+            }
             .toolbar {
                 if !self.settings.shouldShowOnboarding {
                     ToolbarItemGroup(placement: .primaryAction) {
@@ -405,6 +416,7 @@ struct ContentView: View {
                 self.refreshInputDevices()
             }
             .onDisappear {
+                self.cancelInlineDictationSession()
                 Task { await self.asr.stopWithoutTranscription() }
                 self.cancelPrewarmDictationIfNeeded()
                 // Note: Overlay lifecycle is now managed by MenuBarManager
@@ -1481,6 +1493,7 @@ struct ContentView: View {
             hotkeyManagerInitialized: self.$hotkeyManagerInitialized,
             hotkeyMode: self.$hotkeyMode,
             enableStreamingPreview: self.$enableStreamingPreview,
+            inlineLiveTypingEnabled: self.$inlineLiveTypingEnabled,
             copyToClipboard: self.$copyToClipboard,
             hotkeyManager: self.hotkeyManager,
             menuBarManager: self.menuBarManager,
@@ -1715,6 +1728,104 @@ struct ContentView: View {
     private func captureRecordingContext() {
         self.captureRecordingTargetContext()
         self.captureRecordingFormattingContextIfNeeded()
+        self.beginInlineDictationIfEligible()
+    }
+
+    private enum InlineOutputDisposition: Equatable {
+        case useExistingTyping
+        case committedInline
+        case copiedAfterInterruption
+    }
+
+    private func beginInlineDictationIfEligible() {
+        self.cancelInlineDictationSession()
+
+        guard self.settings.inlineLiveTypingEnabled,
+              self.activeRecordingMode == .dictate,
+              !self.settings.spokenSendEnabled,
+              !self.isOnboardingVoicePlaygroundStepActive,
+              self.recordingAppInfo?.bundleId != Bundle.main.bundleIdentifier
+        else { return }
+
+        let result = self.inlineDictationCoordinator.begin(
+            sessionID: self.asr.currentStreamingSessionID
+        )
+        guard case .started = result else {
+            DebugLogger.shared.debug(
+                "Inline dictation unavailable: \(String(describing: result))",
+                source: "InlineDictation"
+            )
+            return
+        }
+
+        self.inlineDictationSessionStarted = true
+        self.inlineDictationInterrupted = false
+        NotchOverlayManager.shared.setInlineLiveTypingActive(true)
+        DebugLogger.shared.info("Inline dictation session started", source: "InlineDictation")
+    }
+
+    private func handleInlinePartialUpdate(_ update: ASRPartialUpdate) {
+        guard self.inlineDictationSessionStarted, !self.inlineDictationInterrupted else { return }
+
+        switch self.inlineDictationCoordinator.apply(update) {
+        case .applied:
+            break
+        case .frozen:
+            DebugLogger.shared.info(
+                "Inline dictation preview frozen before rolling-window rollover",
+                source: "InlineDictation"
+            )
+        case .ignoredStale:
+            break
+        case .notActive:
+            self.inlineDictationInterrupted = true
+            NotchOverlayManager.shared.setInlineLiveTypingActive(false)
+        case let .interrupted(reason):
+            self.inlineDictationInterrupted = true
+            NotchOverlayManager.shared.setInlineLiveTypingActive(false)
+            DebugLogger.shared.warning(
+                "Inline dictation interrupted: \(String(describing: reason))",
+                source: "InlineDictation"
+            )
+        }
+    }
+
+    private func finishInlineDictation(finalText: String) -> InlineOutputDisposition {
+        guard self.inlineDictationSessionStarted else { return .useExistingTyping }
+        defer { self.resetInlineDictationState() }
+
+        guard !self.inlineDictationInterrupted else {
+            ClipboardService.copyToClipboard(finalText)
+            return .copiedAfterInterruption
+        }
+
+        switch self.inlineDictationCoordinator.finish(finalText: finalText) {
+        case .finished:
+            return .committedInline
+        case .notActive:
+            ClipboardService.copyToClipboard(finalText)
+            return .copiedAfterInterruption
+        case let .interrupted(reason, _):
+            ClipboardService.copyToClipboard(finalText)
+            DebugLogger.shared.warning(
+                "Inline finalization interrupted: \(String(describing: reason))",
+                source: "InlineDictation"
+            )
+            return .copiedAfterInterruption
+        }
+    }
+
+    @discardableResult
+    private func cancelInlineDictationSession() -> InlineCancelResult {
+        let result = self.inlineDictationCoordinator.cancel()
+        self.resetInlineDictationState()
+        return result
+    }
+
+    private func resetInlineDictationState() {
+        self.inlineDictationSessionStarted = false
+        self.inlineDictationInterrupted = false
+        NotchOverlayManager.shared.setInlineLiveTypingActive(false)
     }
 
     private func resolveTypingTargetPID() -> (pid: pid_t?, shouldRestoreOriginalFocus: Bool) {
@@ -2110,7 +2221,8 @@ struct ContentView: View {
             !wasCommandMode &&
             !promptTest.isActive &&
             !shouldUseAIOnStop &&
-            !self.settings.spokenSendEnabled
+            !self.settings.spokenSendEnabled &&
+            !self.inlineDictationSessionStarted
         var didRequestOverlayHideOnStop = false
         DebugLogger.shared.info(
             "Routing decision snapshot | activeMode=\(modeAtStop.rawValue) | rewrite=\(wasRewriteMode) | command=\(wasCommandMode) | overlay=\(NotchContentState.shared.mode.rawValue)",
@@ -2158,6 +2270,7 @@ struct ContentView: View {
 
         guard transcribedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
             DebugLogger.shared.debug("Transcription returned empty text", source: "ContentView")
+            self.cancelInlineDictationSession()
             if isOnboardingTryout {
                 if self.asr.lastStopOutcome == .failed {
                     AnalyticsService.shared.recordOnboardingTryoutAttemptResult(
@@ -2390,6 +2503,9 @@ struct ContentView: View {
         self.appBench("text_ready chars=\(finalText.count)")
 
         let shouldPersistOutputs = route == .normal
+        let inlineOutputDisposition: InlineOutputDisposition = shouldPersistOutputs
+            ? self.finishInlineDictation(finalText: finalText)
+            : .useExistingTyping
         if !shouldPersistOutputs {
             DebugLogger.shared.info(
                 "Sandbox route active: suppressing clipboard/history/external typing side effects",
@@ -2444,7 +2560,16 @@ struct ContentView: View {
         }
 
         var didTypeExternally = false
-        let shouldTypeExternally = shouldPersistOutputs && !isFluidFrontmost
+        let shouldTypeExternally = shouldPersistOutputs &&
+            !isFluidFrontmost &&
+            inlineOutputDisposition == .useExistingTyping
+
+        if inlineOutputDisposition == .copiedAfterInterruption {
+            NotchOverlayManager.shared.updateTranscriptionText("Final copied")
+            if !didRequestOverlayHideOnStop {
+                try? await Task.sleep(nanoseconds: 650_000_000)
+            }
+        }
 
         DebugLogger.shared.debug(
             "Typing decision → frontmost: \(frontmostName), fluidFrontmost: \(isFluidFrontmost), editorFocused: \(self.isTranscriptionFocused), willTypeExternally: \(shouldTypeExternally)",
@@ -2886,6 +3011,7 @@ struct ContentView: View {
         // Keep hotkey/recording state deterministic before applying output text.
         if self.asr.isRunning {
             DebugLogger.shared.info("Actions: stopping active recording before history action output", source: "ContentView")
+            self.cancelInlineDictationSession()
             await self.asr.stopWithoutTranscription()
             self.cancelPrewarmDictationIfNeeded()
         }
@@ -2955,6 +3081,7 @@ struct ContentView: View {
         // to behave like a stop instead of start).
         if self.asr.isRunning {
             DebugLogger.shared.info("Actions: stopping active recording before reprocess", source: "ContentView")
+            self.cancelInlineDictationSession()
             await self.asr.stopWithoutTranscription()
             self.cancelPrewarmDictationIfNeeded()
         }
@@ -3500,10 +3627,9 @@ struct ContentView: View {
             },
             commandModeCallback: {
                 DebugLogger.shared.info("Command mode triggered", source: "ContentView")
-                self.captureRecordingContext()
-
                 // Set flag so stopAndProcessTranscription knows to process as command
                 self.setActiveRecordingMode(.command)
+                self.captureRecordingContext()
 
                 // Set overlay mode to command
                 self.menuBarManager.setOverlayMode(.command)
@@ -3530,6 +3656,9 @@ struct ContentView: View {
                 }
             },
             rewriteModeCallback: {
+                // Establish edit mode before context capture so inline dictation
+                // cannot inherit a stale normal-dictation mode.
+                self.setActiveRecordingMode(.edit)
                 self.captureRecordingContext()
 
                 // Try to capture text first while still in the other app
@@ -3551,9 +3680,6 @@ struct ContentView: View {
                     // Text was selected - edit mode (with selected context)
                     self.menuBarManager.setOverlayMode(.edit)
                 }
-
-                // Set flag so stopAndProcessTranscription knows to process as rewrite
-                self.setActiveRecordingMode(.edit)
 
                 guard !self.asr.isRunningOrStarting else { return }
 
@@ -3682,6 +3808,7 @@ struct ContentView: View {
         if self.asr.isRunningOrStarting {
             DebugLogger.shared.debug("Cancel shortcut: cancelling ASR recording", source: "ContentView")
             let isOnboardingTryout = self.isOnboardingVoicePlaygroundStepActive
+            self.cancelInlineDictationSession()
             Task {
                 await self.asr.stopWithoutTranscription()
                 if isOnboardingTryout {
@@ -4565,6 +4692,7 @@ private extension ContentView {
         self.enableDebugLogs = SettingsStore.shared.enableDebugLogs
         self.hotkeyMode = SettingsStore.shared.hotkeyMode
         self.enableStreamingPreview = SettingsStore.shared.enableStreamingPreview
+        self.inlineLiveTypingEnabled = SettingsStore.shared.inlineLiveTypingEnabled
         self.copyToClipboard = SettingsStore.shared.copyTranscriptionToClipboard
         self.launchAtStartup = SettingsStore.shared.launchAtStartup
         self.showInDock = SettingsStore.shared.showInDock

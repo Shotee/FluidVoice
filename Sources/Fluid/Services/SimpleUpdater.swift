@@ -3,6 +3,7 @@ import Foundation
 import PromiseKit
 
 enum SimpleUpdateError: Error, LocalizedError {
+    case disabledForLiveVariant
     case invalidURL
     case invalidResponse
     case jsonDecoding
@@ -18,6 +19,8 @@ enum SimpleUpdateError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .disabledForLiveVariant:
+            return "Updates and rollback are disabled in FluidVoice Live."
         case .invalidURL: return "Invalid URL."
         case .invalidResponse: return "Invalid HTTP response from GitHub."
         case .jsonDecoding: return "The data couldn’t be read because it isn’t in the correct format."
@@ -127,6 +130,17 @@ final class SimpleUpdater {
     static let shared = SimpleUpdater()
     private init() {}
 
+    /// The Live prototype must never replace itself or create rollback copies.
+    /// Keeping this check in the updater as well as AppDelegate protects callers
+    /// such as the menu bar and settings UI that can invoke the updater directly.
+    static var isLiveVariant: Bool {
+        #if FLUIDVOICE_LIVE_VARIANT
+        return true
+        #else
+        return false
+        #endif
+    }
+
     private let fileManager = FileManager.default
     private let maxRollbackBackups = 3
     private let rollbackBackupDirectoryName = "RollbackBackups"
@@ -146,15 +160,20 @@ final class SimpleUpdater {
     }
 
     func hasRollbackBackup() -> Bool {
+        guard !Self.isLiveVariant else { return false }
         return self.latestRollbackBackup() != nil
     }
 
     func latestRollbackVersion() -> String? {
+        guard !Self.isLiveVariant else { return nil }
         guard let latest = self.latestRollbackBackup() else { return nil }
         return self.versionString(for: latest)
     }
 
     func rollbackToLatestBackup() async throws {
+        guard !Self.isLiveVariant else {
+            throw SimpleUpdateError.disabledForLiveVariant
+        }
         guard self.updateOperationGate.begin() else {
             throw SimpleUpdateError.updateAlreadyInProgress
         }
@@ -193,6 +212,9 @@ final class SimpleUpdater {
         limit: Int = 3,
         includePrerelease: Bool = false
     ) async throws -> [ReleaseBuildOption] {
+        guard !Self.isLiveVariant else {
+            throw SimpleUpdateError.disabledForLiveVariant
+        }
         let releases = try await self.fetchReleases(owner: owner, repo: repo)
         let count = max(1, limit)
         let candidates = self.sortedCandidateReleases(
@@ -303,6 +325,9 @@ final class SimpleUpdater {
         repo: String,
         includePrerelease: Bool = false
     ) async throws -> (hasUpdate: Bool, latestVersion: String) {
+        guard !Self.isLiveVariant else {
+            throw SimpleUpdateError.disabledForLiveVariant
+        }
         guard !self.isUpdateInProgress else {
             throw SimpleUpdateError.updateAlreadyInProgress
         }
@@ -337,6 +362,9 @@ final class SimpleUpdater {
         repo: String,
         includePrerelease: Bool = false
     ) async throws {
+        guard !Self.isLiveVariant else {
+            throw SimpleUpdateError.disabledForLiveVariant
+        }
         guard self.updateOperationGate.begin() else {
             throw SimpleUpdateError.updateAlreadyInProgress
         }

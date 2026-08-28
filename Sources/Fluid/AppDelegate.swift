@@ -20,6 +20,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private var analyticsActivationSuppressionDeadline: Date?
     private var hasDeferredMLXUpgradeOffer = false
 
+    private static var isLiveVariant: Bool {
+        #if FLUIDVOICE_LIVE_VARIANT
+        return true
+        #else
+        return false
+        #endif
+    }
+
     var shouldPresentStartupMicrophoneNotice: Bool {
         !self.wasLaunchedAsLoginItem || SettingsStore.shared.showMainWindowAtLoginLaunch
     }
@@ -41,21 +49,45 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
         // Initialize app settings (dock visibility, etc.)
         SettingsStore.shared.initializeAppSettings()
-        let shouldOfferMLXUpgrade = PrivateAIMLXUpgradeCoordinator.prepareOfferIfNeeded()
-        LocalAPIServer.shared.start()
+        let shouldOfferMLXUpgrade = Self.isLiveVariant
+            ? false
+            : PrivateAIMLXUpgradeCoordinator.prepareOfferIfNeeded()
+
+        if Self.isLiveVariant {
+            // Keep the prototype isolated from the production app's optional
+            // background services and persistent output stores. The bundle ID is
+            // different, so these defaults belong to FluidVoice Live only.
+            SettingsStore.shared.autoUpdateCheckEnabled = false
+            SettingsStore.shared.saveTranscriptionHistory = false
+            SettingsStore.shared.saveAudioWithTranscriptionHistory = false
+            SettingsStore.shared.setLaunchAtStartup(false)
+            LocalAPIServer.shared.stop()
+            DebugLogger.shared.info(
+                "FluidVoice Live variant: updates, login item, Local API, and history are disabled",
+                source: "AppDelegate"
+            )
+        } else {
+            LocalAPIServer.shared.start()
+        }
 
         // Record first-open synchronously before async analytics bootstrap so
         // onboarding initialization is deterministic on brand-new installs.
-        let isTrueFirstOpen = AnalyticsIdentityStore.shared.ensureFirstOpenRecorded()
+        let isTrueFirstOpen = Self.isLiveVariant
+            ? true
+            : AnalyticsIdentityStore.shared.ensureFirstOpenRecorded()
         SettingsStore.shared.bootstrapOnboardingState(isTrueFirstOpen: isTrueFirstOpen)
 
-        AnalyticsService.shared.bootstrap()
+        if !Self.isLiveVariant {
+            AnalyticsService.shared.bootstrap()
+        }
 
-        // Check for updates automatically if enabled (initial check on launch)
-        self.checkForUpdatesAutomatically()
+        if !Self.isLiveVariant {
+            // Check for updates automatically if enabled (initial check on launch)
+            self.checkForUpdatesAutomatically()
 
-        // Schedule periodic update checks every hour while app is running
-        self.schedulePeriodicUpdateChecks()
+            // Schedule periodic update checks every hour while app is running
+            self.schedulePeriodicUpdateChecks()
+        }
 
         // Login Items can launch hidden; reveal the real SwiftUI window so ContentView startup runs.
         self.openMainWindowOnLaunch()
@@ -352,6 +384,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     // MARK: - Manual Update Check
 
     @objc func checkForUpdatesManually() {
+        guard !Self.isLiveVariant else {
+            DebugLogger.shared.info(
+                "Manual update check ignored in FluidVoice Live variant",
+                source: "AppDelegate"
+            )
+            return
+        }
+
         // Confirm invocation
         DebugLogger.shared.info("🔎 Manual update check triggered", source: "AppDelegate")
 
@@ -404,6 +444,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     // MARK: - Automatic Update Check
 
     private func checkForUpdatesAutomatically() {
+        guard !Self.isLiveVariant else { return }
+
         // Check if we should perform an automatic update check
         guard SettingsStore.shared.shouldCheckForUpdates() else {
             let reason = !SettingsStore.shared.autoUpdateCheckEnabled ? "disabled by user" : "checked recently"

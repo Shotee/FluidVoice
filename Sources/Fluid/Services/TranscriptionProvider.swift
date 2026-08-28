@@ -122,6 +122,53 @@ struct ASRTranscriptionResult {
     }
 }
 
+/// Describes how a streaming transcription hypothesis relates to the audio
+/// captured during the current dictation session.
+///
+/// Most providers return a hypothesis for the complete prefix seen so far.
+/// Cohere's preview path is bounded to a rolling window, so consumers must not
+/// treat its text as an append-only cumulative transcript.
+nonisolated enum StreamingHypothesisScope: Sendable, Equatable {
+    case cumulative
+    case rollingWindow(maxSeconds: TimeInterval)
+
+    var maxSeconds: TimeInterval? {
+        switch self {
+        case .cumulative:
+            return nil
+        case let .rollingWindow(maxSeconds):
+            return maxSeconds
+        }
+    }
+}
+
+/// A versioned hypothesis emitted by ASR while a dictation session is active.
+///
+/// `sequence` is strictly increasing within `sessionID`. Consumers can use
+/// the session and sequence values to discard late results from an older
+/// transcription task before mutating the focused input field.
+nonisolated struct ASRPartialUpdate: Sendable, Equatable {
+    let sessionID: UUID
+    let sequence: Int
+    let text: String
+    let sampleCount: Int
+    let scope: StreamingHypothesisScope
+
+    init(
+        sessionID: UUID,
+        sequence: Int,
+        text: String,
+        sampleCount: Int,
+        scope: StreamingHypothesisScope
+    ) {
+        self.sessionID = sessionID
+        self.sequence = sequence
+        self.text = text
+        self.sampleCount = max(0, sampleCount)
+        self.scope = scope
+    }
+}
+
 // MARK: - Transcription Provider Protocol
 
 /// Protocol that abstracts speech-to-text transcription.

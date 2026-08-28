@@ -180,6 +180,9 @@ final class ASRService: ObservableObject {
     @Published var isRunning: Bool = false
     @Published var finalText: String = ""
     @Published var partialTranscription: String = ""
+    /// Latest versioned streaming hypothesis, including empty hypotheses.
+    /// Legacy `partialTranscription` remains available for the overlay UI.
+    @Published private(set) var partialUpdate: ASRPartialUpdate?
     @Published var wordBoostStatusText: String = "Word boost: off"
     @Published var micStatus: AVAuthorizationStatus = .notDetermined
     @Published var isAsrReady: Bool = false
@@ -1110,6 +1113,12 @@ final class ASRService: ObservableObject {
     private var isProcessingChunk: Bool = false
     private var skipNextChunk: Bool = false
     private var previousFullTranscription: String = ""
+    private var streamingSessionID = UUID()
+    private var streamingSequence = 0
+
+    var currentStreamingSessionID: UUID {
+        self.streamingSessionID
+    }
     private var benchmarkSessionID: Int = 0
     private var benchmarkRecordingStartedAt: TimeInterval?
     private var benchmarkStreamingChunkIndex: Int = 0
@@ -1763,7 +1772,10 @@ final class ASRService: ObservableObject {
         self.finalText.removeAll()
         self.audioBuffer.clear(keepingCapacity: true) // specific optimization for restart
         self.partialTranscription.removeAll()
+        self.partialUpdate = nil
         self.previousFullTranscription.removeAll()
+        self.streamingSessionID = UUID()
+        self.streamingSequence = 0
         self.lastBoostHitTerm = nil
         self.lastProcessedSampleCount = 0
         self.isProcessingChunk = false
@@ -4618,14 +4630,29 @@ final class ASRService: ObservableObject {
     // MARK: - Cache management
 
     func clearModelCache() async throws {
+        #if FLUIDVOICE_LIVE_VARIANT
+        throw NSError(
+            domain: "FluidVoiceLive",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Model cache deletion is disabled in FluidVoice Live."]
+        )
+        #else
         DebugLogger.shared.debug("Clearing model cache via transcription provider", source: "ASRService")
         await self.transcriptionExecutor.cancelAndAwaitPending()
         try await self.transcriptionProvider.clearCache()
         self.isAsrReady = false
         self.modelsExistOnDisk = false
+        #endif
     }
 
     func clearModelCache(for model: SettingsStore.SpeechModel) async throws {
+        #if FLUIDVOICE_LIVE_VARIANT
+        throw NSError(
+            domain: "FluidVoiceLive",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Model cache deletion is disabled in FluidVoice Live."]
+        )
+        #else
         DebugLogger.shared.debug("Clearing model cache for \(model.displayName)", source: "ASRService")
         if SettingsStore.shared.selectedSpeechModel == model {
             await self.transcriptionExecutor.cancelAndAwaitPending()
@@ -4640,6 +4667,7 @@ final class ASRService: ObservableObject {
         guard SettingsStore.shared.selectedSpeechModel == model else { return }
         self.resetTranscriptionProvider()
         await self.checkIfModelsExistAsync()
+        #endif
     }
 
     // MARK: - Timer-based Streaming Transcription (No VAD)
@@ -4830,6 +4858,12 @@ final class ASRService: ObservableObject {
             self.benchmarkCompletedStreamingChunks += 1
             self.lastProcessedSampleCount = currentSampleCount
 
+            self.publishPartialUpdate(
+                text: newText,
+                sampleCount: currentSampleCount,
+                scope: SettingsStore.shared.selectedSpeechModel.streamingHypothesisScope
+            )
+
             // Mark first transcription as complete to clear loading state
             if !self.hasCompletedFirstTranscription {
                 self.hasCompletedFirstTranscription = true
@@ -4869,6 +4903,21 @@ final class ASRService: ObservableObject {
             self.benchmarkLog("chunk_fail index=\(chunkIndex) elapsedMs=\(self.elapsedMilliseconds(since: startedAt)) samples=\(currentSampleCount) inputSamples=\(chunk.count) error=\(error.localizedDescription)")
             self.skipNextChunk = true
         }
+    }
+
+    private func publishPartialUpdate(
+        text: String,
+        sampleCount: Int,
+        scope: StreamingHypothesisScope
+    ) {
+        self.streamingSequence += 1
+        self.partialUpdate = ASRPartialUpdate(
+            sessionID: self.streamingSessionID,
+            sequence: self.streamingSequence,
+            text: text,
+            sampleCount: sampleCount,
+            scope: scope
+        )
     }
 
     /// Smart diff to prevent text from jumping around

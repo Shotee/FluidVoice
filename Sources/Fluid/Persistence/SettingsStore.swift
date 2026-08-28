@@ -1819,6 +1819,20 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// Whether normal dictation should update the focused field while recording.
+    /// Default-true semantics keep existing installs aligned with the Live
+    /// dictation experience while allowing the coordinator to opt out safely.
+    var inlineLiveTypingEnabled: Bool {
+        get {
+            let value = self.defaults.object(forKey: Keys.inlineLiveTypingEnabled)
+            return value as? Bool ?? true
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.inlineLiveTypingEnabled)
+        }
+    }
+
     /// Reuses finalized Parakeet windows so long recordings only process their remaining tail at stop.
     /// Experimental and enabled by default; users can fall back to full-buffer finalization.
     var experimentalParakeetUnifiedFinalEnabled: Bool {
@@ -5042,6 +5056,18 @@ final class SettingsStore: ObservableObject {
             }
         }
 
+        /// Relationship between each streaming hypothesis and the captured audio.
+        /// Cohere's preview decoder is bounded to a 12-second rolling window;
+        /// other models expose a cumulative prefix hypothesis.
+        var streamingHypothesisScope: StreamingHypothesisScope {
+            switch self {
+            case .cohereTranscribeSixBit:
+                return .rollingWindow(maxSeconds: 12)
+            default:
+                return .cumulative
+            }
+        }
+
         /// Minimum audio required before attempting a preview decode.
         /// Cohere performs better with a slightly larger prefix than the default 1 second.
         var minimumStreamingPreviewSeconds: Double {
@@ -5348,6 +5374,7 @@ private extension SettingsStore {
         static let pressAndHoldMode = "PressAndHoldMode"
         static let hotkeyMode = "HotkeyMode"
         static let enableStreamingPreview = "EnableStreamingPreview"
+        static let inlineLiveTypingEnabled = "InlineLiveTypingEnabled"
         static let experimentalParakeetUnifiedFinalEnabled = "ExperimentalParakeetUnifiedFinalEnabled"
         static let skipSilentRecordingsEnabled = "SkipSilentRecordingsEnabled"
         static let enableAIStreaming = "EnableAIStreaming"

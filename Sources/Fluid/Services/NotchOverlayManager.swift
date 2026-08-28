@@ -73,6 +73,7 @@ final class NotchOverlayManager {
     /// Track if bottom overlay is visible
     private(set) var isBottomOverlayVisible: Bool = false
     var isOverlayVisible: Bool { self.state == .visible }
+    private(set) var isInlineLiveTypingActive = false
 
     // Callbacks for command output interaction
     var onCommandOutputDismiss: (() -> Void)?
@@ -683,6 +684,7 @@ final class NotchOverlayManager {
     }
 
     var shouldShowOrTrackLivePreviewText: Bool {
+        guard !self.isInlineLiveTypingActive else { return false }
         guard SettingsStore.shared.enableStreamingPreview else { return false }
         if SettingsStore.shared.overlayPosition == .bottom {
             return true
@@ -690,6 +692,13 @@ final class NotchOverlayManager {
 
         self.refreshNotchPresentationPolicy()
         return self.currentNotchPresentationPolicy.showsStreamingPreview
+    }
+
+    func setInlineLiveTypingActive(_ isActive: Bool) {
+        self.isInlineLiveTypingActive = isActive
+        if isActive {
+            NotchContentState.shared.updateTranscription("")
+        }
     }
 
     var shouldSyncCommandConversationToNotch: Bool {

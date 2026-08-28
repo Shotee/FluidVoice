@@ -52,6 +52,17 @@ extension SettingsStore {
     }
 
     func setLaunchAtStartup(_ enabled: Bool) {
+        #if FLUIDVOICE_LIVE_VARIANT
+        if enabled {
+            self.applyLaunchAtStartupStatus(
+                enabled: false,
+                statusMessage: "Launch at startup is disabled in FluidVoice Live.",
+                errorMessage: nil
+            )
+            return
+        }
+        #endif
+
         #if os(macOS)
         let service = SMAppService.mainApp
         let statusBeforeChange = self.currentLaunchAtStartupSystemState()

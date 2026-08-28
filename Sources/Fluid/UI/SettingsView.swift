@@ -49,6 +49,7 @@ struct SettingsView: View {
     @Binding var hotkeyManagerInitialized: Bool
     @Binding var hotkeyMode: HotkeyActivationMode
     @Binding var enableStreamingPreview: Bool
+    @Binding var inlineLiveTypingEnabled: Bool
     @Binding var copyToClipboard: Bool
 
     // CRITICAL FIX: Cache default device names to avoid CoreAudio calls during view body evaluation.
@@ -1390,6 +1391,25 @@ struct SettingsView: View {
                                     .labelsHidden()
                                     .onChange(of: self.enableStreamingPreview) { _, newValue in
                                         SettingsStore.shared.enableStreamingPreview = newValue
+                                    }
+                            }
+
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Inline Live Typing")
+                                        .font(self.theme.typography.bodyStrong)
+                                        .foregroundStyle(self.settingsTitleText)
+                                    Text("Show short dictations in the focused field while you speak")
+                                        .font(self.theme.typography.bodySmall)
+                                        .foregroundStyle(self.settingsSecondaryText)
+                                }
+
+                                Spacer()
+
+                                Toggle("", isOn: self.$inlineLiveTypingEnabled)
+                                    .labelsHidden()
+                                    .onChange(of: self.inlineLiveTypingEnabled) { _, newValue in
+                                        SettingsStore.shared.inlineLiveTypingEnabled = newValue
                                     }
                             }
 

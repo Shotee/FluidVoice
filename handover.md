@@ -32,6 +32,12 @@ the focused field while recording and be replaced once with the final result.
   text is copied instead of risking destructive insertion.
 - Fluid Intelligence interoperability is an optional spike and does not block
   the MVP.
+- If local Cohere misses the latency target (first inline text around 2.5
+  seconds, subsequent updates around 1.2 seconds), evaluate Soniox streaming
+  API as the next ASR backend: https://soniox.com/.
+- Soniox must be an explicit opt-in, not an automatic fallback, because it
+  changes the product from local processing to cloud audio transmission and may
+  incur usage charges.
 
 ## Next steps
 
@@ -39,4 +45,5 @@ the focused field while recording and be replaced once with the final result.
    short-dictation test in an allow-listed app.
 2. Configure a Personal Team signature so Accessibility permission survives
    rebuilds.
-3. Commit and push the implementation branch; update issue #1 with results.
+3. If Cohere fails the latency gate, open a follow-up implementation issue for
+   the Soniox backend and compare latency, Japanese accuracy, and cost.

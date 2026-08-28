@@ -231,6 +231,7 @@ struct ContentView: View {
     @State private var settingsSearchQuery = ""
     @State private var settingsSearchScrollRequest = 0
 
+    @State private var isHelpEntryHovered = false
     @State private var isSettingsEntryHovered = false
     @State private var isSettingsBackHovered = false
     @State private var playgroundUsed: Bool = SettingsStore.shared.playgroundUsed
@@ -1175,6 +1176,11 @@ struct ContentView: View {
         NSWorkspace.shared.open(url)
     }
 
+    private func openHelpDocumentation() {
+        guard let url = URL(string: "https://docs.altic.dev/") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     private var sidebarContent: some View {
         ZStack {
             // Keep both sidebars mounted so navigation feedback never waits on view construction.
@@ -1233,7 +1239,10 @@ struct ContentView: View {
         .accentColor(self.theme.palette.accent)
         .animation(nil, value: self.selectedSidebarItem)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            self.settingsEntryButton
+            VStack(spacing: 0) {
+                self.helpEntryButton
+                self.settingsEntryButton
+            }
         }
     }
 
@@ -1388,6 +1397,39 @@ struct ContentView: View {
         .onHover { self.isSettingsEntryHovered = $0 }
         .help("Settings")
         .accessibilityLabel("Settings")
+    }
+
+    private var helpEntryButton: some View {
+        Button {
+            self.openHelpDocumentation()
+        } label: {
+            HStack(spacing: self.theme.metrics.spacing.sm) {
+                Image(systemName: "questionmark.circle")
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18)
+
+                Text("Help")
+
+                Spacer(minLength: self.theme.metrics.spacing.sm)
+
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .font(self.theme.typography.sidebarItem)
+            .padding(.horizontal, self.theme.metrics.spacing.md)
+            .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(SidebarChromeButtonStyle(
+            isHovered: self.isHelpEntryHovered,
+            reduceMotion: self.accessibilityReduceMotion
+        ))
+        .onHover { self.isHelpEntryHovered = $0 }
+        .help("Open FluidVoice Help")
+        .accessibilityLabel("Help")
+        .accessibilityHint("Opens FluidVoice documentation in your default browser")
     }
 
     private var modeTransitionAnimation: Animation {

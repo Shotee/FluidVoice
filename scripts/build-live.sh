@@ -81,6 +81,20 @@ fi
 mv "${BUILT_APP}" "${LIVE_APP}"
 mv "${LIVE_APP}/Contents/MacOS/${BUILD_PRODUCT_NAME}" "${LIVE_EXECUTABLE}"
 
+# The CTranscribe artifact is a versioned framework. Xcode's package copy can
+# resolve its symlinks into duplicate directories/files, which makes codesign
+# classify the bundle as ambiguous. Restore the canonical framework layout in
+# the isolated Live build product before refreshing the outer app signature.
+CTRANSCRIBE_FRAMEWORK="${LIVE_APP}/Contents/Frameworks/CTranscribe.framework"
+if [ -d "${CTRANSCRIBE_FRAMEWORK}/Versions/A" ]; then
+    rm -rf "${CTRANSCRIBE_FRAMEWORK}/Versions/Current"
+    rm -rf "${CTRANSCRIBE_FRAMEWORK}/CTranscribe"
+    rm -rf "${CTRANSCRIBE_FRAMEWORK}/Resources"
+    ln -s A "${CTRANSCRIBE_FRAMEWORK}/Versions/Current"
+    ln -s Versions/Current/CTranscribe "${CTRANSCRIBE_FRAMEWORK}/CTranscribe"
+    ln -s Versions/Current/Resources "${CTRANSCRIBE_FRAMEWORK}/Resources"
+fi
+
 # Info.plist is generated from the build settings, but the post-build rename
 # must also update the executable and user-visible names inside the bundle.
 plutil -replace CFBundleExecutable -string "${LIVE_PRODUCT_NAME}" "${LIVE_APP}/Contents/Info.plist"
@@ -89,8 +103,14 @@ plutil -replace CFBundleDisplayName -string "${LIVE_PRODUCT_NAME}" "${LIVE_APP}/
 
 if [ "${FLUIDVOICE_LIVE_UNSIGNED:-0}" != "1" ]; then
     # The rename and plist edits happen after xcodebuild, so refresh the app
-    # signature once the final bundle layout is in place.
-    codesign --force --deep --sign "${CODE_SIGN_IDENTITY}" --timestamp=none "${LIVE_APP}"
+    # signature once the final bundle layout is in place. Nested frameworks were
+    # already signed by Xcode; avoiding --deep also sidesteps legacy framework
+    # symlink layouts that codesign can otherwise misclassify as ambiguous.
+    codesign --force \
+        --sign "${CODE_SIGN_IDENTITY}" \
+        --preserve-metadata=entitlements,requirements,flags \
+        --timestamp=none \
+        "${LIVE_APP}"
 fi
 
 echo "FluidVoice Live app: ${LIVE_APP}"

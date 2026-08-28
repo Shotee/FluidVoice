@@ -13,12 +13,16 @@ the focused field while recording and be replaced once with the final result.
 - Working branch: `codex/inline-streaming-dictation`.
 - Official FluidVoice 1.6.9 and the Japanese Cohere model are installed.
 - GitHub CLI authentication for `Shotee` was renewed.
-- An Apple Development signing identity is not installed yet.
-- The isolated unsigned Live app builds at
-  `/private/tmp/fluidvoice-live-build2/Build/Products/Debug/FluidVoice Live.app`.
+- Xcode is signed in to the user's Apple Account and a Personal Team Apple
+  Development certificate has been created.
+- The isolated signed Live app builds at
+  `/private/tmp/fluidvoice-live-signed/Build/Products/Debug/FluidVoice Live.app`.
+- `codesign --verify --deep --strict` passes for the signed Live app, including
+  its nested frameworks.
 - The Live app launches and reuses the installed Cohere artifacts without a
-  second download. Microphone access is granted; Accessibility access is still
-  awaiting explicit approval.
+  second download. Microphone access is granted. The unsigned build was added
+  to Accessibility; replacing it with the signed build is waiting at the macOS
+  Touch ID authorization prompt.
 - All 355 project tests pass after the final safety-hardening patch.
 
 ## Decisions
@@ -41,9 +45,7 @@ the focused field while recording and be replaced once with the final result.
 
 ## Next steps
 
-1. Grant Accessibility access to the unsigned Live build and perform the first
-   short-dictation test in an allow-listed app.
-2. Configure a Personal Team signature so Accessibility permission survives
-   rebuilds.
-3. If Cohere fails the latency gate, open a follow-up implementation issue for
+1. Complete Touch ID authorization, add the signed Live build to Accessibility,
+   and perform the first short-dictation test in an allow-listed app.
+2. If Cohere fails the latency gate, open a follow-up implementation issue for
    the Soniox backend and compare latency, Japanese accuracy, and cost.

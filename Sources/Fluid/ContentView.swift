@@ -228,6 +228,8 @@ struct ContentView: View {
     @State private var selectedSidebarItem: SidebarItem?
     @State private var previousSidebarItem: SidebarItem? = nil // Track previous for mode transitions
     @State private var settingsNavigation = SettingsNavigationState()
+    @State private var settingsSearchQuery = ""
+    @State private var settingsSearchScrollRequest = 0
 
     @State private var isSettingsEntryHovered = false
     @State private var isSettingsBackHovered = false
@@ -974,16 +976,24 @@ struct ContentView: View {
     }
 
     private func navigateToApp(_ destination: SidebarItem) {
+        self.resetSettingsSearch()
         self.settingsNavigation.leaveForApp()
         self.selectedSidebarItem = destination
     }
 
     private func openSettings(_ section: SettingsSection) {
+        self.resetSettingsSearch()
         self.settingsNavigation.present(section, returningTo: self.selectedSidebarItem)
     }
 
     private func closeSettings() {
+        self.resetSettingsSearch()
         self.selectedSidebarItem = self.settingsNavigation.dismiss()
+    }
+
+    private func resetSettingsSearch() {
+        self.settingsSearchQuery = ""
+        self.settingsSearchScrollRequest += 1
     }
 
     private func resetPendingShortcutState() {
@@ -1220,6 +1230,7 @@ struct ContentView: View {
             }
         }
         .listStyle(.sidebar)
+        .accentColor(self.theme.palette.accent)
         .animation(nil, value: self.selectedSidebarItem)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             self.settingsEntryButton
@@ -1256,35 +1267,94 @@ struct ContentView: View {
             .help("Back to FluidVoice")
             .accessibilityLabel("Back to FluidVoice")
 
+            SettingsSearchField(text: Binding(
+                get: { self.settingsSearchQuery },
+                set: { self.updateSettingsSearchQuery($0) }
+            ))
+            .frame(height: 24)
+            .padding(.horizontal, self.theme.metrics.spacing.md)
+            .padding(.top, self.theme.metrics.spacing.xs)
+            .padding(.bottom, self.theme.metrics.spacing.sm)
+
             List(selection: Binding(
                 get: { self.settingsNavigation.selectedSection },
                 set: { newValue in
                     if let newValue {
                         self.settingsNavigation.selectedSection = newValue
+                        self.settingsSearchScrollRequest += 1
                     }
                 }
             )) {
-                ForEach(SettingsSection.allCases) { section in
+                ForEach(self.filteredSettingsSections) { section in
+                    let isSelected = self.settingsNavigation.selectedSection == section
                     NavigationLink(value: section) {
                         HStack(spacing: self.theme.metrics.spacing.sm) {
                             Image(systemName: section.systemImage)
                                 .symbolRenderingMode(.hierarchical)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(isSelected ? Color.white.opacity(0.9) : Color.secondary)
                                 .frame(width: 18)
 
                             Text(section.title)
+                                .foregroundStyle(isSelected ? Color.white : Color.primary)
                         }
                         .font(self.theme.typography.sidebarItem)
                     }
                     .sidebarOptionHover(
-                        isSelected: self.settingsNavigation.selectedSection == section,
+                        isSelected: isSelected,
                         reduceMotion: self.accessibilityReduceMotion
                     )
                 }
             }
             .listStyle(.sidebar)
-            .padding(.top, self.theme.metrics.spacing.sm)
+            .accentColor(self.theme.palette.accent)
             .animation(nil, value: self.settingsNavigation.selectedSection)
+        }
+    }
+
+    private var isSettingsSearchActive: Bool {
+        !self.settingsSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var settingsSearchResults: [SettingsSearchResult] {
+        self.availableSettingsSearchResults(for: self.settingsSearchQuery)
+    }
+
+    private var filteredSettingsSections: [SettingsSection] {
+        guard self.isSettingsSearchActive else { return SettingsSection.allCases }
+        let matchingSections = Set(self.settingsSearchResults.map(\.section))
+        return SettingsSection.allCases.filter(matchingSections.contains)
+    }
+
+    private func updateSettingsSearchQuery(_ query: String) {
+        self.settingsSearchQuery = query
+        self.settingsSearchScrollRequest += 1
+
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let results = self.availableSettingsSearchResults(for: query)
+        self.settingsNavigation.selectedSection = SettingsSearchIndex.preferredSection(
+            current: self.settingsNavigation.selectedSection,
+            results: results
+        )
+    }
+
+    private func availableSettingsSearchResults(for query: String) -> [SettingsSearchResult] {
+        SettingsSearchIndex.results(for: query)
+            .filter { self.isSettingsSearchTargetAvailable($0.target) }
+    }
+
+    private func isSettingsSearchTargetAvailable(_ target: SettingsSearchTarget) -> Bool {
+        switch target {
+        case .microphonePermission:
+            return self.asr.micStatus != .authorized
+        case .accessibilityPermission:
+            return !self.accessibilityEnabled
+        case .audioStorage:
+            return SettingsStore.shared.saveTranscriptionHistory &&
+                SettingsStore.shared.saveAudioWithTranscriptionHistory
+        case .bottomOffset:
+            return self.settings.overlayPosition == .bottom
+        default:
+            return true
         }
     }
 
@@ -1341,23 +1411,25 @@ struct ContentView: View {
     }
 
     private func sidebarNavigationLink(_ item: SidebarItem, title: String, systemImage: String) -> some View {
-        NavigationLink(value: item) {
+        let isSelected = self.selectedSidebarItem == item
+        return NavigationLink(value: item) {
             HStack(spacing: self.theme.metrics.spacing.sm) {
                 Image(nsImage: SidebarSymbolCache.image(named: systemImage))
                     .renderingMode(.template)
                     .resizable()
                     .scaledToFit()
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.9) : Color.secondary)
                     .frame(width: 16, height: 16)
                     .accessibilityHidden(true)
 
                 Text(title)
+                    .foregroundStyle(isSelected ? Color.white : Color.primary)
             }
             .font(self.theme.typography.sidebarItem)
             .padding(.vertical, self.theme.metrics.spacing.xs / 2)
         }
         .sidebarOptionHover(
-            isSelected: self.selectedSidebarItem == item,
+            isSelected: isSelected,
             reduceMotion: self.accessibilityReduceMotion
         )
     }
@@ -1609,40 +1681,53 @@ struct ContentView: View {
 
     // MARK: - Preferences View
 
+    @ViewBuilder
     private var preferencesView: some View {
-        SettingsView(
-            selectedSection: self.settingsNavigation.selectedSection ?? .general,
-            microphonePreferenceCoordinator: self.appServices.microphonePreferenceCoordinator,
-            appear: self.$appear,
-            visualizerNoiseThreshold: self.$visualizerNoiseThreshold,
-            selectedInputUID: self.$selectedInputUID,
-            selectedOutputUID: self.$selectedOutputUID,
-            inputDevices: self.$inputDevices,
-            outputDevices: self.$outputDevices,
-            accessibilityEnabled: self.$accessibilityEnabled,
-            primaryDictationShortcuts: self.$primaryDictationShortcuts,
-            activeShortcutRecordingTarget: self.$activeShortcutRecordingTarget,
-            shortcutRecordingMessage: self.$shortcutRecordingMessage,
-            commandModeShortcut: self.$commandModeHotkeyShortcut,
-            rewriteShortcut: self.$rewriteModeHotkeyShortcut,
-            cancelRecordingShortcut: self.$cancelRecordingHotkeyShortcut,
-            pasteLastTranscriptionShortcut: self.$pasteLastTranscriptionHotkeyShortcut,
-            commandModeShortcutEnabled: self.$isCommandModeShortcutEnabled,
-            rewriteShortcutEnabled: self.$isRewriteModeShortcutEnabled,
-            pasteLastTranscriptionShortcutEnabled: self.$isPasteLastTranscriptionShortcutEnabled,
-            hotkeyManagerInitialized: self.$hotkeyManagerInitialized,
-            hotkeyMode: self.$hotkeyMode,
-            enableStreamingPreview: self.$enableStreamingPreview,
-            copyToClipboard: self.$copyToClipboard,
-            hotkeyManager: self.hotkeyManager,
-            menuBarManager: self.menuBarManager,
-            startRecording: self.startRecording,
-            refreshDevices: self.refreshDevices,
-            openAccessibilitySettings: self.openAccessibilitySettings,
-            restartApp: self.restartApp,
-            revealAppInFinder: self.revealAppInFinder,
-            openApplicationsFolder: self.openApplicationsFolder
-        )
+        if self.isSettingsSearchActive, self.settingsSearchResults.isEmpty {
+            ContentUnavailableView {
+                Label("No Settings Found", systemImage: "magnifyingglass")
+            } description: {
+                Text("No settings match “\(self.settingsSearchQuery)”.")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .combine)
+        } else {
+            SettingsView(
+                selectedSection: self.settingsNavigation.selectedSection ?? .general,
+                searchResults: self.settingsSearchResults,
+                searchScrollRequest: self.settingsSearchScrollRequest,
+                microphonePreferenceCoordinator: self.appServices.microphonePreferenceCoordinator,
+                appear: self.$appear,
+                visualizerNoiseThreshold: self.$visualizerNoiseThreshold,
+                selectedInputUID: self.$selectedInputUID,
+                selectedOutputUID: self.$selectedOutputUID,
+                inputDevices: self.$inputDevices,
+                outputDevices: self.$outputDevices,
+                accessibilityEnabled: self.$accessibilityEnabled,
+                primaryDictationShortcuts: self.$primaryDictationShortcuts,
+                activeShortcutRecordingTarget: self.$activeShortcutRecordingTarget,
+                shortcutRecordingMessage: self.$shortcutRecordingMessage,
+                commandModeShortcut: self.$commandModeHotkeyShortcut,
+                rewriteShortcut: self.$rewriteModeHotkeyShortcut,
+                cancelRecordingShortcut: self.$cancelRecordingHotkeyShortcut,
+                pasteLastTranscriptionShortcut: self.$pasteLastTranscriptionHotkeyShortcut,
+                commandModeShortcutEnabled: self.$isCommandModeShortcutEnabled,
+                rewriteShortcutEnabled: self.$isRewriteModeShortcutEnabled,
+                pasteLastTranscriptionShortcutEnabled: self.$isPasteLastTranscriptionShortcutEnabled,
+                hotkeyManagerInitialized: self.$hotkeyManagerInitialized,
+                hotkeyMode: self.$hotkeyMode,
+                enableStreamingPreview: self.$enableStreamingPreview,
+                copyToClipboard: self.$copyToClipboard,
+                hotkeyManager: self.hotkeyManager,
+                menuBarManager: self.menuBarManager,
+                startRecording: self.startRecording,
+                refreshDevices: self.refreshDevices,
+                openAccessibilitySettings: self.openAccessibilitySettings,
+                restartApp: self.restartApp,
+                revealAppInFinder: self.revealAppInFinder,
+                openApplicationsFolder: self.openApplicationsFolder
+            )
+        }
     }
 
     private var recordingView: some View {
@@ -4647,25 +4732,30 @@ private struct SidebarOptionHoverModifier: ViewModifier {
     let isSelected: Bool
     let reduceMotion: Bool
 
+    @Environment(\.theme) private var theme
     @State private var isHovered = false
 
     func body(content: Content) -> some View {
         content
             .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 3)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.primary.opacity(self.hoverOpacity))
-                    // Match the sidebar List's three-point vertical row padding without changing layout.
-                    .padding(.vertical, -3)
+                    .fill(self.backgroundColor)
             )
+            .padding(.horizontal, -5)
+            .padding(.vertical, -3)
             .contentShape(Rectangle())
             .onHover { self.isHovered = $0 }
             .animation(.easeOut(duration: self.reduceMotion ? 0.08 : 0.12), value: self.isHovered)
     }
 
-    private var hoverOpacity: Double {
-        guard self.isHovered else { return 0 }
-        return self.isSelected ? 0.04 : 0.07
+    private var backgroundColor: Color {
+        if self.isSelected {
+            return self.theme.palette.accent
+        }
+        return Color.primary.opacity(self.isHovered ? 0.08 : 0)
     }
 }
 

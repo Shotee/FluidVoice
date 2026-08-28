@@ -29,6 +29,8 @@ struct SettingsView: View {
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @ObservedObject private var settings = SettingsStore.shared
     let selectedSection: SettingsSection
+    let searchResults: [SettingsSearchResult]
+    let searchScrollRequest: Int
     @ObservedObject var microphonePreferenceCoordinator: MicrophonePreferenceCoordinator
     @Binding var appear: Bool
     @Binding var visualizerNoiseThreshold: Double
@@ -69,6 +71,7 @@ struct SettingsView: View {
     @State private var audioHistoryUsageBytes: Int64 = 0
     @State private var draggedMicrophoneUID: String?
     @State private var hoveredMicrophoneUID: String?
+    @State private var searchScrollCoordinator = SettingsSearchScrollCoordinator()
 
     let hotkeyManager: GlobalHotkeyManager?
     let menuBarManager: MenuBarManager
@@ -78,22 +81,6 @@ struct SettingsView: View {
     let restartApp: () -> Void
     let revealAppInFinder: () -> Void
     let openApplicationsFolder: () -> Void
-
-    private var isRecordingAnyShortcut: Bool {
-        self.activeShortcutRecordingTarget != nil
-    }
-
-    private var settingsTitleText: Color {
-        Color(nsColor: .labelColor)
-    }
-
-    private var settingsSecondaryText: Color {
-        self.colorScheme == .light ? Color(nsColor: .labelColor).opacity(0.90) : self.theme.palette.primaryText.opacity(0.82)
-    }
-
-    private var settingsTertiaryText: Color {
-        self.colorScheme == .light ? Color(nsColor: .labelColor).opacity(0.85) : self.theme.palette.secondaryText
-    }
 
     private func isRecording(_ target: ShortcutRecordingTarget) -> Bool {
         self.activeShortcutRecordingTarget == target
@@ -214,38 +201,20 @@ struct SettingsView: View {
         .padding(.bottom, 4)
     }
 
-    private var analyticsSettingsCard: some View {
-        ThemedCard(style: .standard) {
-            VStack(alignment: .leading, spacing: 14) {
-                Label("Analytics & Privacy", systemImage: "hand.raised.fill")
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-
-                self.optionToggleRow(
-                    title: "Share Anonymous Analytics",
-                    description: "Send lean, anonymous daily usage, onboarding, retention, and model metrics. Never includes transcription text or prompts.",
-                    isOn: self.analyticsToggleBinding
-                )
-
-                Button("What we collect") {
-                    self.showAnalyticsPrivacy = true
-                }
-                .buttonStyle(.link)
-            }
-            .padding(16)
-        }
-    }
-
     var body: some View {
         SettingsPersistentScrollView(
             theme: self.theme,
-            colorScheme: self.colorScheme
+            colorScheme: self.colorScheme,
+            searchScrollCoordinator: self.searchScrollCoordinator,
+            searchScrollTarget: self.selectedSectionSearchResults.first?.target,
+            searchScrollRequest: self.searchScrollRequest
         ) {
             VStack(spacing: 16) {
                 Text(self.selectedSection.title)
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .settingsSearchTarget(self.selectedSection.searchTarget)
 
                 // App Settings Card
                 ThemedCard(style: .standard) {
@@ -264,6 +233,7 @@ struct SettingsView: View {
                                 errorMessage: self.settings.launchAtStartupErrorMessage,
                                 isOn: self.launchAtStartupBinding
                             )
+                            .settingsSearchTarget(.launchAtStartup)
                             Divider().opacity(0.2)
 
                             // Show window when launched at login
@@ -275,6 +245,7 @@ struct SettingsView: View {
                                     set: { SettingsStore.shared.showMainWindowAtLoginLaunch = $0 }
                                 )
                             )
+                            .settingsSearchTarget(.showWindowAtLogin)
                             Divider().opacity(0.2)
 
                             // Hide from Dock & App Switcher
@@ -287,6 +258,7 @@ struct SettingsView: View {
                                     set: { SettingsStore.shared.hideFromDockAndAppSwitcher = $0 }
                                 )
                             )
+                            .settingsSearchTarget(.dockVisibility)
                             Divider().opacity(0.2)
 
                             // Accent Color
@@ -338,6 +310,7 @@ struct SettingsView: View {
                                     )
                                 }
                             }
+                            .settingsSearchTarget(.accentColor)
                             Divider().opacity(0.2)
 
                             HStack {
@@ -366,6 +339,7 @@ struct SettingsView: View {
                                 .pickerStyle(.menu)
                                 .frame(width: 170, alignment: .trailing)
                             }
+                            .settingsSearchTarget(.transcriptionSounds)
 
                             if SettingsStore.shared.transcriptionStartSound != .none {
                                 HStack {
@@ -470,6 +444,7 @@ struct SettingsView: View {
                                     .font(self.theme.typography.bodySmall)
                                     .foregroundStyle(self.settingsSecondaryText)
                             }
+                            .settingsSearchTarget(.automaticUpdates)
 
                             // Update Buttons
                             HStack(spacing: 10) {
@@ -593,9 +568,6 @@ struct SettingsView: View {
                 }
                 .shownInSettingsSection(.general, selectedSection: self.selectedSection)
 
-                self.analyticsSettingsCard
-                    .shownInSettingsSection(.general, selectedSection: self.selectedSection)
-
                 if self.asr.micStatus != .authorized {
                     // Only surface microphone permission when the user needs to act.
                     ThemedCard(style: .standard) {
@@ -659,6 +631,7 @@ struct SettingsView: View {
                         }
                         .padding(16)
                     }
+                    .settingsSearchTarget(.microphonePermission)
                     .shownInSettingsSection(.dictation, selectedSection: self.selectedSection)
                 }
 
@@ -693,6 +666,7 @@ struct SettingsView: View {
                                 }
                             }
                         }
+                        .settingsSearchTarget(.globalHotkey)
 
                         if self.accessibilityEnabled {
                             VStack(alignment: .leading, spacing: 12) {
@@ -727,6 +701,7 @@ struct SettingsView: View {
                                         .foregroundStyle(self.settingsTertiaryText)
 
                                     self.primaryDictationShortcutsList()
+                                        .settingsSearchTarget(.primaryDictationShortcuts)
                                     self.dictationPromptPicker(for: .primary)
                                     Divider().opacity(0.2).padding(.vertical, 4)
 
@@ -757,6 +732,7 @@ struct SettingsView: View {
                                             self.commandModeShortcutEnabled = false
                                         }
                                     )
+                                    .settingsSearchTarget(.commandModeShortcut)
                                     Divider().opacity(0.2).padding(.vertical, 4)
 
                                     self.shortcutRow(
@@ -777,6 +753,7 @@ struct SettingsView: View {
                                             self.activeShortcutRecordingTarget = .edit
                                         }
                                     )
+                                    .settingsSearchTarget(.editModeShortcut)
                                     Divider().opacity(0.2).padding(.vertical, 4)
 
                                     self.shortcutRow(
@@ -796,6 +773,7 @@ struct SettingsView: View {
                                             self.activeShortcutRecordingTarget = .cancel
                                         }
                                     )
+                                    .settingsSearchTarget(.cancelRecordingShortcut)
                                     Divider().opacity(0.2).padding(.vertical, 4)
 
                                     self.shortcutRow(
@@ -825,6 +803,7 @@ struct SettingsView: View {
                                             self.pasteLastTranscriptionShortcutEnabled = false
                                         }
                                     )
+                                    .settingsSearchTarget(.pasteLastTranscriptionShortcut)
                                 }
                                 .padding(12)
                                 .background(
@@ -863,6 +842,7 @@ struct SettingsView: View {
                                         SettingsStore.shared.hotkeyMode = newValue
                                         self.hotkeyManager?.setHotkeyMode(newValue)
                                     }
+                                    .settingsSearchTarget(.activationMode)
                                     Divider().opacity(0.2)
 
                                     self.optionToggleRow(
@@ -873,6 +853,7 @@ struct SettingsView: View {
                                     .onChange(of: self.copyToClipboard) { _, newValue in
                                         SettingsStore.shared.copyTranscriptionToClipboard = newValue
                                     }
+                                    .settingsSearchTarget(.copyToClipboard)
                                     Divider().opacity(0.2)
 
                                     HStack(alignment: .center) {
@@ -898,9 +879,11 @@ struct SettingsView: View {
                                         .pickerStyle(.menu)
                                         .frame(width: 170, alignment: .trailing)
                                     }
+                                    .settingsSearchTarget(.textInsertionMode)
                                     Divider().opacity(0.2)
 
                                     self.spokenSendSettings
+                                        .settingsSearchTarget(.spokenSend)
                                     Divider().opacity(0.2)
 
                                     self.optionToggleRow(
@@ -914,6 +897,7 @@ struct SettingsView: View {
                                             }
                                         )
                                     )
+                                    .settingsSearchTarget(.transcriptionHistory)
                                     Divider().opacity(0.2)
 
                                     self.optionToggleRow(
@@ -928,12 +912,14 @@ struct SettingsView: View {
                                         )
                                     )
                                     .disabled(!SettingsStore.shared.saveTranscriptionHistory)
+                                    .settingsSearchTarget(.audioHistory)
 
                                     if SettingsStore.shared.saveTranscriptionHistory,
                                        SettingsStore.shared.saveAudioWithTranscriptionHistory
                                     {
                                         self.audioHistoryControls()
                                             .padding(.top, 2)
+                                            .settingsSearchTarget(.audioStorage)
                                         Divider().opacity(0.2)
                                     } else {
                                         Divider().opacity(0.2)
@@ -947,6 +933,7 @@ struct SettingsView: View {
                                             set: { SettingsStore.shared.weekendsDontBreakStreak = $0 }
                                         )
                                     )
+                                    .settingsSearchTarget(.usageStreak)
                                     Divider().opacity(0.2)
 
                                     self.optionToggleRow(
@@ -958,6 +945,7 @@ struct SettingsView: View {
                                         ),
                                         allowsDescriptionWrapping: true
                                     )
+                                    .settingsSearchTarget(.skipSilentRecordings)
                                     Divider().opacity(0.2)
 
                                     self.optionToggleRow(
@@ -968,6 +956,7 @@ struct SettingsView: View {
                                             set: { SettingsStore.shared.pauseMediaDuringTranscription = $0 }
                                         )
                                     )
+                                    .settingsSearchTarget(.pauseMedia)
                                     Divider().opacity(0.2)
 
                                     self.optionToggleRow(
@@ -977,6 +966,7 @@ struct SettingsView: View {
                                             "Never includes transcription text or prompts.",
                                         isOn: self.detailedAnalyticsToggleBinding
                                     )
+                                    .settingsSearchTarget(.analyticsPrivacy)
 
                                     HStack {
                                         Button("What we collect") {
@@ -1045,6 +1035,7 @@ struct SettingsView: View {
                                     .controlSize(.small)
                                 }
                             }
+                            .settingsSearchTarget(.accessibilityPermission)
                         }
                     }
                     .padding(16)
@@ -1110,6 +1101,7 @@ struct SettingsView: View {
                     }
                     .padding(16)
                 }
+                .settingsSearchTarget(.textFormatting)
                 .shownInSettingsSection(.dictation, selectedSection: self.selectedSection)
 
                 // Notification Settings Card
@@ -1128,6 +1120,7 @@ struct SettingsView: View {
                                     set: { SettingsStore.shared.notifyAIProcessingFailures = $0 }
                                 )
                             )
+                            .settingsSearchTarget(.aiEnhancementFailures)
 
                             Divider().opacity(0.2)
 
@@ -1144,6 +1137,7 @@ struct SettingsView: View {
                                     }
                                 )
                             )
+                            .settingsSearchTarget(.microphoneChanges)
                         }
                     }
                     .padding(16)
@@ -1175,6 +1169,7 @@ struct SettingsView: View {
 
                         VStack(alignment: .leading, spacing: 12) {
                             self.microphonePrioritySection
+                                .settingsSearchTarget(.inputDevicePriority)
                                 .onChange(of: self.inputDevices) { _, newDevices in
                                     let defaultInput = AudioDevice.getDefaultInputDevice()
                                     self.cachedDefaultInputUID = defaultInput?.uid ?? ""
@@ -1246,6 +1241,7 @@ struct SettingsView: View {
                                     }
                                 }
                             }
+                            .settingsSearchTarget(.outputDevice)
 
                             self.microphoneQualityGuidance
                         }
@@ -1281,6 +1277,7 @@ struct SettingsView: View {
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
                             }
+                            .settingsSearchTarget(.overlaySensitivity)
 
                             HStack(spacing: 10) {
                                 Text("More")
@@ -1325,6 +1322,7 @@ struct SettingsView: View {
                                 .pickerStyle(.menu)
                                 .frame(width: 170, alignment: .trailing)
                             }
+                            .settingsSearchTarget(.overlayPosition)
 
                             Divider().padding(.vertical, 8)
 
@@ -1368,6 +1366,7 @@ struct SettingsView: View {
                                         .frame(width: 36, alignment: .leading)
                                 }
                             }
+                            .settingsSearchTarget(.transcriptionPreviewLength)
 
                             Divider().padding(.vertical, 4)
 
@@ -1405,6 +1404,7 @@ struct SettingsView: View {
                                     .frame(width: 170, alignment: .trailing)
                                 }
                             }
+                            .settingsSearchTarget(.overlayStyle)
 
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
@@ -1424,6 +1424,7 @@ struct SettingsView: View {
                                         SettingsStore.shared.enableStreamingPreview = newValue
                                     }
                             }
+                            .settingsSearchTarget(.livePreview)
 
                             // Bottom overlay specific settings (only show when bottom is selected)
                             if self.settings.overlayPosition == .bottom {
@@ -1454,6 +1455,7 @@ struct SettingsView: View {
                                     }
                                     .frame(width: 170, alignment: .trailing)
                                 }
+                                .settingsSearchTarget(.bottomOffset)
                             }
 
                             if self.asr.isRunning {
@@ -1475,6 +1477,7 @@ struct SettingsView: View {
                     self.backupUtilityRow()
                         .padding(16)
                 }
+                .settingsSearchTarget(.backupAndRestore)
                 .shownInSettingsSection(.dataAndDiagnostics, selectedSection: self.selectedSection)
 
                 // Debug Settings Card
@@ -1519,6 +1522,7 @@ struct SettingsView: View {
                     }
                     .padding(16)
                 }
+                .settingsSearchTarget(.debugLogs)
                 .shownInSettingsSection(.dataAndDiagnostics, selectedSection: self.selectedSection)
 
                 ThemedCard(style: .standard) {
@@ -1541,9 +1545,11 @@ struct SettingsView: View {
                     }
                     .padding(16)
                 }
+                .settingsSearchTarget(.fasterLongDictation)
                 .shownInSettingsSection(.dataAndDiagnostics, selectedSection: self.selectedSection)
             }
             .padding(16)
+            .environment(\.settingsSearchPresentation, self.settingsSearchPresentation)
         }
         .id(self.selectedSection)
         .sheet(isPresented: self.$showAnalyticsPrivacy) {
@@ -2279,6 +2285,35 @@ struct SettingsView: View {
 }
 
 private extension SettingsView {
+    var isRecordingAnyShortcut: Bool {
+        self.activeShortcutRecordingTarget != nil
+    }
+
+    var selectedSectionSearchResults: [SettingsSearchResult] {
+        self.searchResults.filter { $0.section == self.selectedSection }
+    }
+
+    var settingsSearchPresentation: SettingsSearchPresentation? {
+        guard let primaryTarget = self.selectedSectionSearchResults.first?.target else { return nil }
+        return SettingsSearchPresentation(
+            matchedTargets: Set(self.selectedSectionSearchResults.map(\.target)),
+            primaryTarget: primaryTarget,
+            scrollCoordinator: self.searchScrollCoordinator
+        )
+    }
+
+    var settingsTitleText: Color {
+        Color(nsColor: .labelColor)
+    }
+
+    var settingsSecondaryText: Color {
+        self.colorScheme == .light ? Color(nsColor: .labelColor).opacity(0.90) : self.theme.palette.primaryText.opacity(0.82)
+    }
+
+    var settingsTertiaryText: Color {
+        self.colorScheme == .light ? Color(nsColor: .labelColor).opacity(0.85) : self.theme.palette.secondaryText
+    }
+
     var microphonePrioritySection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -2657,78 +2692,6 @@ private struct MicrophonePriorityDropDelegate: DropDelegate {
         self.draggedUID = nil
         self.onDropCompleted()
         return true
-    }
-}
-
-private final class SettingsPersistentScroller: NSScroller {
-    override static var isCompatibleWithOverlayScrollers: Bool {
-        false
-    }
-}
-
-private struct SettingsPersistentScrollView<Content: View>: NSViewRepresentable {
-    private let theme: AppTheme
-    private let colorScheme: ColorScheme
-    private let content: Content
-
-    init(
-        theme: AppTheme,
-        colorScheme: ColorScheme,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.theme = theme
-        self.colorScheme = colorScheme
-        self.content = content()
-    }
-
-    private var hostedContent: AnyView {
-        AnyView(
-            self.content
-                .appTheme(self.theme)
-                .environment(\.colorScheme, self.colorScheme)
-        )
-    }
-
-    func makeNSView(context _: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = false
-        scrollView.scrollerStyle = .legacy
-        scrollView.verticalScroller = SettingsPersistentScroller()
-        scrollView.verticalScroller?.isHidden = false
-        scrollView.verticalScroller?.alphaValue = 1
-        scrollView.verticalScrollElasticity = .allowed
-        scrollView.horizontalScrollElasticity = .none
-
-        let hostingView = NSHostingView(rootView: self.hostedContent)
-        hostingView.translatesAutoresizingMaskIntoConstraints = false
-        hostingView.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        hostingView.setContentHuggingPriority(.required, for: .vertical)
-
-        scrollView.documentView = hostingView
-        NSLayoutConstraint.activate([
-            hostingView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
-            hostingView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
-            hostingView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
-            hostingView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
-        ])
-
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: NSScrollView, context _: Context) {
-        (scrollView.documentView as? NSHostingView<AnyView>)?.rootView = self.hostedContent
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = false
-        scrollView.scrollerStyle = .legacy
-        if !(scrollView.verticalScroller is SettingsPersistentScroller) {
-            scrollView.verticalScroller = SettingsPersistentScroller()
-        }
-        scrollView.verticalScroller?.isHidden = false
-        scrollView.verticalScroller?.alphaValue = 1
     }
 }
 
